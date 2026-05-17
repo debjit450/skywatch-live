@@ -1,0 +1,43 @@
+import type { LucideIcon } from "lucide-react";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Ban,
+  Compass,
+  Ghost,
+  Gauge,
+  GitFork,
+  MapPinned,
+  Mountain,
+  Radar,
+  Radio,
+  RefreshCw,
+  ShieldAlert,
+  Siren,
+  TrendingDown,
+  WifiOff,
+  Zap,
+} from "lucide-react";
+import type { AnomalyType } from "./anomaly";
+
+export const anomalyIcons: Record<AnomalyType, LucideIcon> = {
+  ghost: Ghost,
+  squawk_7500: ShieldAlert,
+  squawk_7600: Radio,
+  squawk_7700: Siren,
+  low_fast: Zap,
+  rapid_descent: TrendingDown,
+  signal_lost: WifiOff,
+  ml_anomaly: AlertTriangle,
+  speed_anomaly: Gauge,
+  altitude_anomaly: Mountain,
+  heading_anomaly: Compass,
+  position_anomaly: MapPinned,
+  circling: RefreshCw,
+  trajectory_deviation: GitFork,
+  geofence: Ban,
+  proximity: Radar,
+  altitude_bust: Mountain,
+  speed_envelope: Gauge,
+  behavioral: AlertCircle,
+};
