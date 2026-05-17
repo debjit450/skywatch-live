@@ -15,3 +15,4 @@ requests>=2.32
 python-dotenv>=1.0
 daphne>=4.1
 websockets>=12,<16
+eventlet>=0.35.2

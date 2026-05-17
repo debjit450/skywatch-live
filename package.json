@@ -1,0 +1,22 @@
+{
+  "name": "skywatch-live-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm run --prefix frontend dev",
+    "build": "npm run --prefix frontend build",
+    "build:dev": "npm run --prefix frontend build:dev",
+    "preview": "npm run --prefix frontend preview",
+    "typecheck": "npm run --prefix frontend typecheck",
+    "lint": "npm run --prefix frontend lint",
+    "check": "npm run --prefix frontend check",
+    "format": "npm run --prefix frontend format",
+    "generate:airports": "npm run --prefix frontend generate:airports",
+    "startup": "powershell -ExecutionPolicy Bypass -File ./startup.ps1",
+    "startup:nodock": "powershell -ExecutionPolicy Bypass -File ./startup.ps1 -NoDocker",
+    "backend-dev": "node scripts/backend-manage.mjs runserver",
+    "backend:migrate": "node scripts/backend-manage.mjs migrate",
+    "backend:check": "node scripts/backend-manage.mjs check",
+    "backend:check-deploy": "node scripts/backend-manage.mjs check --deploy",
+    "dev-all": "node scripts/dev-all.mjs"
+  }
+}

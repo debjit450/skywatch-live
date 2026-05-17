@@ -16,13 +16,14 @@ dist-ssr
 .nitro
 
 # OurAirports raw CSV (re-download with the URL in airports.ts)
-src/lib/data/airports.csv
+frontend/src/lib/data/airports.csv
 
 # Local environment files and secrets
 .env
 .env.*
 *.local
 !.env.example
+!frontend/.env.example
 backend/.env
 backend/.env.*
 !backend/.env.example

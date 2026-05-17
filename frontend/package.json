@@ -12,14 +12,9 @@
     "lint": "eslint src vite.config.ts eslint.config.js",
     "check": "npm run typecheck && npm run lint && npm run build",
     "format": "prettier --write .",
-    "generate:airports": "node scripts/generate-airport-data.mjs",
-    "startup": "powershell -ExecutionPolicy Bypass -File ./startup.ps1",
-    "startup:nodock": "powershell -ExecutionPolicy Bypass -File ./startup.ps1 -NoDocker",
-    "backend-dev": "cd backend && .\\venv\\Scripts\\Activate.ps1 ; python manage.py runserver",
-    "dev-all": "start cmd /k \"npm run dev\" && start cmd /k \"npm run backend-dev\""
+    "generate:airports": "node scripts/generate-airport-data.mjs"
   },
   "dependencies": {
-    "@cloudflare/vite-plugin": "^1.25.5",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@tailwindcss/vite": "^4.2.1",
