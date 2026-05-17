@@ -9,6 +9,7 @@
     "typecheck": "npm run --prefix frontend typecheck",
     "lint": "npm run --prefix frontend lint",
     "check": "npm run --prefix frontend check",
+    "test": "npm run check && npm run backend:test",
     "format": "npm run --prefix frontend format",
     "generate:airports": "npm run --prefix frontend generate:airports",
     "startup": "powershell -ExecutionPolicy Bypass -File ./startup.ps1",
@@ -17,6 +18,7 @@
     "backend:migrate": "node scripts/backend-manage.mjs migrate",
     "backend:check": "node scripts/backend-manage.mjs check",
     "backend:check-deploy": "node scripts/backend-manage.mjs check --deploy",
+    "backend:test": "node scripts/backend-manage.mjs test",
     "dev-all": "node scripts/dev-all.mjs"
   }
 }
