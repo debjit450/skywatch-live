@@ -74,7 +74,9 @@ export default function AlertRulesPanel({ onClose }: { onClose: () => void }) {
         writeLocalRules(localRules);
         setRules(localRules);
         setName("");
-        setStatusMessage("Rule saved locally. Start the Django backend to evaluate rules server-side.");
+        setStatusMessage(
+          "Rule saved locally. Start the Django backend to evaluate rules server-side.",
+        );
       });
   };
 

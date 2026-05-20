@@ -12,7 +12,24 @@ import {
   ZoomControl,
 } from "react-leaflet";
 import L from "leaflet";
-import { CloudSun, Navigation2, Pause, Play, Satellite, ShieldAlert, Sun, Cloud, CloudLightning, Wind, Eye, Thermometer, Compass, Hash, Loader2, Plane } from "lucide-react";
+import {
+  CloudSun,
+  Navigation2,
+  Pause,
+  Play,
+  Satellite,
+  ShieldAlert,
+  Sun,
+  Cloud,
+  CloudLightning,
+  Wind,
+  Eye,
+  Thermometer,
+  Compass,
+  Hash,
+  Loader2,
+  Plane,
+} from "lucide-react";
 import type { Flight } from "@/lib/opensky";
 import type { AnomalousFlight } from "@/lib/anomaly";
 import type { FlightRouteInfo } from "@/lib/enrichment-types";
@@ -25,7 +42,6 @@ import { classifyFlight, getClassInfo } from "@/lib/aircraft-class";
 import { satelliteColor, type SatelliteObject } from "@/lib/satellites";
 import { gcBearing, gcDistanceKm } from "@/lib/format";
 import { fetchBackendJson } from "@/lib/backend-api";
-
 
 interface MapViewProps {
   flights: Flight[];
@@ -617,7 +633,13 @@ interface FlightCanvasLayerProps {
   showClustering: boolean;
 }
 
-function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect, showClustering }: FlightCanvasLayerProps) {
+function FlightCanvasLayer({
+  flights,
+  anomalyMap,
+  selectedId,
+  onSelect,
+  showClustering,
+}: FlightCanvasLayerProps) {
   const map = useMap();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -716,7 +738,7 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect, showClus
         if (
           !existing ||
           flightRenderScore(renderedFlight.flight, renderedFlight.kind) >
-          flightRenderScore(existing.flight, existing.kind)
+            flightRenderScore(existing.flight, existing.kind)
         ) {
           sampledFlights.set(cellKey, renderedFlight);
         }
@@ -1054,10 +1076,7 @@ function SatelliteCanvasLayer({ satellites }: { satellites: SatelliteObject[] })
     pane.style.zIndex = "620";
     pane.style.pointerEvents = "none";
 
-    const canvas = L.DomUtil.create(
-      "canvas",
-      "leaflet-zoom-animated",
-    ) as HTMLCanvasElement;
+    const canvas = L.DomUtil.create("canvas", "leaflet-zoom-animated") as HTMLCanvasElement;
     canvasRef.current = canvas;
     pane.appendChild(canvas);
 
@@ -1262,9 +1281,9 @@ function TrackCanvasLayer({
 
     const predictedLivePoint = currentFlight
       ? livePointFromPredictedFlight(
-        currentFlight,
-        predictFlightState(currentFlight, Date.now() / 1000),
-      )
+          currentFlight,
+          predictFlightState(currentFlight, Date.now() / 1000),
+        )
       : null;
     const dynamicEnd: [number, number] | null = predictedLivePoint
       ? [predictedLivePoint.lat, predictedLivePoint.lon]
@@ -1346,10 +1365,7 @@ function TrackCanvasLayer({
     pane.style.zIndex = "760";
     pane.style.pointerEvents = "none";
 
-    const canvas = L.DomUtil.create(
-      "canvas",
-      "leaflet-zoom-animated",
-    ) as HTMLCanvasElement;
+    const canvas = L.DomUtil.create("canvas", "leaflet-zoom-animated") as HTMLCanvasElement;
     canvasRef.current = canvas;
     pane.appendChild(canvas);
 
@@ -1560,7 +1576,7 @@ function drawAirport(
     ctx.save();
     ctx.fillStyle = "#ffffff";
     // Rotate 45 degrees for northeast direction (airport symbol standard)
-    ctx.rotate(45 * Math.PI / 180);
+    ctx.rotate((45 * Math.PI) / 180);
 
     // Plane path scale based on size
     const s = size * 0.55;
@@ -1717,10 +1733,7 @@ function AirportCanvasLayer({
     airportPane.style.zIndex = "390";
     airportPane.style.pointerEvents = "none";
 
-    const canvas = L.DomUtil.create(
-      "canvas",
-      "leaflet-zoom-animated",
-    ) as HTMLCanvasElement;
+    const canvas = L.DomUtil.create("canvas", "leaflet-zoom-animated") as HTMLCanvasElement;
     canvasRef.current = canvas;
     airportPane.appendChild(canvas);
 
@@ -1902,7 +1915,15 @@ function MapKeyboardBridge({
       window.removeEventListener("skywatch:toggle-airports", toggleAirports);
       window.removeEventListener("skywatch:toggle-map-layers", focusLayers);
     };
-  }, [map, onTogglePredictions, onToggleSatellites, onToggleTfr, onToggleWeather, onToggleClustering, onToggleAirports]);
+  }, [
+    map,
+    onTogglePredictions,
+    onToggleSatellites,
+    onToggleTfr,
+    onToggleWeather,
+    onToggleClustering,
+    onToggleAirports,
+  ]);
   return null;
 }
 
@@ -1920,7 +1941,7 @@ function projectedPosition(
   const angularDistance = distanceMeters / PREDICTION_EARTH_RADIUS_M;
   const lat2 = Math.asin(
     Math.sin(lat1) * Math.cos(angularDistance) +
-    Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing),
+      Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing),
   );
   const lon2 =
     lon1 +
@@ -1929,13 +1950,13 @@ function projectedPosition(
       Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2),
     );
 
-  return [
-    (lat2 * 180) / Math.PI,
-    normalizeLongitude((lon2 * 180) / Math.PI),
-  ];
+  return [(lat2 * 180) / Math.PI, normalizeLongitude((lon2 * 180) / Math.PI)];
 }
 
-function predictionPathForFlight(flight: Flight): { positions: [number, number][]; confidence: number } {
+function predictionPathForFlight(flight: Flight): {
+  positions: [number, number][];
+  confidence: number;
+} {
   const path = flight.predicted_path ?? [];
   const positions = path
     .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon))
@@ -1964,11 +1985,11 @@ function predictionPathForFlight(flight: Flight): { positions: [number, number][
       step === 0
         ? [flight.latitude as number, flight.longitude as number]
         : projectedPosition(
-          flight.latitude as number,
-          flight.longitude as number,
-          flight.true_track as number,
-          (flight.velocity as number) * step,
-        ),
+            flight.latitude as number,
+            flight.longitude as number,
+            flight.true_track as number,
+            (flight.velocity as number) * step,
+          ),
     ),
     confidence: 0.38,
   };
@@ -2151,11 +2172,7 @@ function WeatherLayer({
         });
 
         return (
-          <Marker
-            key={`weather-${code}`}
-            position={[airport.lat, airport.lon]}
-            icon={icon}
-          >
+          <Marker key={`weather-${code}`} position={[airport.lat, airport.lon]} icon={icon}>
             <Popup className="bg-transparent border-0 shadow-none m-0 p-0">
               <div className="flex flex-col min-w-[280px] max-w-[340px] text-zinc-200 bg-zinc-950/95 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl font-sans text-xs select-none">
                 <div className="flex flex-col gap-1 border-b border-white/5 pb-3 mb-3">
@@ -2187,7 +2204,9 @@ function WeatherLayer({
                       <Wind className="w-4 h-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Wind</span>
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Wind
+                      </span>
                       <strong className="block text-xs text-zinc-200 truncate mt-0.5 font-mono">
                         {item.wind_direction !== null ? (
                           <span className="inline-flex items-center gap-1">
@@ -2197,7 +2216,9 @@ function WeatherLayer({
                             />
                             {item.wind_direction}° / {item.wind_speed ?? 0} kt
                           </span>
-                        ) : "Calm"}
+                        ) : (
+                          "Calm"
+                        )}
                       </strong>
                     </div>
                   </div>
@@ -2208,7 +2229,9 @@ function WeatherLayer({
                       <Thermometer className="w-4 h-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Temp</span>
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Temp
+                      </span>
                       <strong className="block text-xs text-zinc-200 mt-0.5 font-mono">
                         {item.temperature !== null ? `${item.temperature} °C` : "--"}
                       </strong>
@@ -2221,7 +2244,9 @@ function WeatherLayer({
                       <Eye className="w-4 h-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Visibility</span>
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Visibility
+                      </span>
                       <strong className="block text-xs text-zinc-200 mt-0.5 font-mono">
                         {item.visibility !== null ? `${item.visibility} sm` : "--"}
                       </strong>
@@ -2234,7 +2259,9 @@ function WeatherLayer({
                       <Cloud className="w-4 h-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Ceiling</span>
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Ceiling
+                      </span>
                       <strong className="block text-xs text-zinc-200 mt-0.5 font-mono">
                         {item.ceiling !== null ? `${item.ceiling.toLocaleString()} ft` : "Clear"}
                       </strong>
@@ -2243,7 +2270,9 @@ function WeatherLayer({
                 </div>
 
                 <div className="flex flex-col gap-1.5 border-t border-white/5 pt-3">
-                  <span className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500">Raw METAR</span>
+                  <span className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500">
+                    Raw METAR
+                  </span>
                   <p className="text-[10px] font-mono text-zinc-400 bg-white/5 p-2 rounded-lg leading-relaxed break-words border border-white/5 select-text">
                     {item.raw}
                   </p>
@@ -2324,23 +2353,35 @@ function TfrLayer({
                 className: display.isFresh ? "sw-restriction-fresh" : undefined,
               }}
             >
-              <Tooltip sticky className="bg-zinc-950/95 border border-white/10 text-zinc-200 rounded-xl p-3 shadow-2xl font-sans text-xs">
+              <Tooltip
+                sticky
+                className="bg-zinc-950/95 border border-white/10 text-zinc-200 rounded-xl p-3 shadow-2xl font-sans text-xs"
+              >
                 <div className="flex flex-col min-w-[220px] max-w-[300px]">
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <div className="flex items-center gap-1.5 min-w-0 font-bold">
-                      <span className={`w-2 h-2 rounded-full ${display.isCritical ? "bg-rose-500" : "bg-amber-500"}`}></span>
-                      <span className={`${display.isCritical ? "text-rose-400" : "text-amber-400"} truncate`}>
+                      <span
+                        className={`w-2 h-2 rounded-full ${display.isCritical ? "bg-rose-500" : "bg-amber-500"}`}
+                      ></span>
+                      <span
+                        className={`${display.isCritical ? "text-rose-400" : "text-amber-400"} truncate`}
+                      >
                         {display.riskLabel.toUpperCase()}
                       </span>
                     </div>
-                    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${display.sourceType === "backup"
-                        ? "border-zinc-500/40 bg-zinc-500/10 text-zinc-300"
-                        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                      }`}>
+                    <span
+                      className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+                        display.sourceType === "backup"
+                          ? "border-zinc-500/40 bg-zinc-500/10 text-zinc-300"
+                          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      }`}
+                    >
                       {display.sourceType === "backup" ? "Backup" : "Live"}
                     </span>
                   </div>
-                  <div className="font-semibold text-white text-sm mb-1 leading-snug">{display.name}</div>
+                  <div className="font-semibold text-white text-sm mb-1 leading-snug">
+                    {display.name}
+                  </div>
                   <div className="text-[10px] text-zinc-400 mb-2 font-mono leading-relaxed">
                     LIMITS: {display.altitudeLimits} | AUTH: {display.authority}
                   </div>
@@ -2373,23 +2414,71 @@ function featurePolygons(feature: TfrFeature): number[][][] {
       .map((polygon) => polygon[0])
       .filter((ring): ring is number[][] => Array.isArray(ring) && ring.length > 2);
   }
-  return [(coords as number[][][])[0]].filter((ring): ring is number[][] => Array.isArray(ring) && ring.length > 2);
+  return [(coords as number[][][])[0]].filter(
+    (ring): ring is number[][] => Array.isArray(ring) && ring.length > 2,
+  );
 }
 
 function restrictionDisplay(feature: TfrFeature, nowMs: number) {
   const props = feature.properties || {};
-  const sourceType = String(propValue(props, ["source_type", "sourceType"], "live")).toLowerCase() === "backup" ? "backup" : "live";
-  const riskLabel = String(propValue(props, ["riskLevel", "risk_level", "severity"], "High Risk (Advisory)"));
-  const reason = compactText(String(propValue(props, ["reason", "qualifier", "REASON", "NOTAM_TXT", "hazard", "type"], "airspace restriction")), 180);
-  const name = compactText(String(propValue(props, ["name", "title", "NOTAM", "notamNumber", "restriction_kind", "type"], "Airspace restriction")), 90);
-  const altitudeLimits = compactText(String(propValue(props, ["altitudeLimits", "altitude_limits", "altitude"], altitudeText(props))), 60);
-  const authority = compactText(String(propValue(props, ["authority", "source"], "Government feed")), 80);
-  const source = compactText(String(propValue(props, ["source"], sourceType === "backup" ? "SkyWatch backup" : "Live government feed")), 90);
+  const sourceType =
+    String(propValue(props, ["source_type", "sourceType"], "live")).toLowerCase() === "backup"
+      ? "backup"
+      : "live";
+  const riskLabel = String(
+    propValue(props, ["riskLevel", "risk_level", "severity"], "High Risk (Advisory)"),
+  );
+  const reason = compactText(
+    String(
+      propValue(
+        props,
+        ["reason", "qualifier", "REASON", "NOTAM_TXT", "hazard", "type"],
+        "airspace restriction",
+      ),
+    ),
+    180,
+  );
+  const name = compactText(
+    String(
+      propValue(
+        props,
+        ["name", "title", "NOTAM", "notamNumber", "restriction_kind", "type"],
+        "Airspace restriction",
+      ),
+    ),
+    90,
+  );
+  const altitudeLimits = compactText(
+    String(
+      propValue(props, ["altitudeLimits", "altitude_limits", "altitude"], altitudeText(props)),
+    ),
+    60,
+  );
+  const authority = compactText(
+    String(propValue(props, ["authority", "source"], "Government feed")),
+    80,
+  );
+  const source = compactText(
+    String(
+      propValue(
+        props,
+        ["source"],
+        sourceType === "backup" ? "SkyWatch backup" : "Live government feed",
+      ),
+    ),
+    90,
+  );
   const isCritical = isCriticalRestriction(riskLabel, reason, name);
-  const issuedAt = parseTimestamp(propValue(props, ["issued_at", "issuedAt", "issueTime", "startTime", "validFrom"], ""));
-  const expiresAt = parseTimestamp(propValue(props, ["expires_at", "expiresAt", "expireTime", "endTime", "validTo"], ""));
+  const issuedAt = parseTimestamp(
+    propValue(props, ["issued_at", "issuedAt", "issueTime", "startTime", "validFrom"], ""),
+  );
+  const expiresAt = parseTimestamp(
+    propValue(props, ["expires_at", "expiresAt", "expireTime", "endTime", "validTo"], ""),
+  );
   const expiresIn = formatExpiry(expiresAt, nowMs);
-  const isFresh = Boolean(issuedAt && nowMs - issuedAt.getTime() >= 0 && nowMs - issuedAt.getTime() <= 2 * 60 * 60 * 1000);
+  const isFresh = Boolean(
+    issuedAt && nowMs - issuedAt.getTime() >= 0 && nowMs - issuedAt.getTime() <= 2 * 60 * 60 * 1000,
+  );
 
   return {
     id: String(propValue(props, ["id", "notamNumber", "NOTAM"], "unknown")),
@@ -2412,7 +2501,9 @@ function propValue(props: Record<string, unknown>, keys: string[], fallback: unk
     if (key in props && props[key] !== null && props[key] !== undefined && props[key] !== "") {
       return props[key];
     }
-    const match = Object.keys(props).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+    const match = Object.keys(props).find(
+      (candidate) => candidate.toLowerCase() === key.toLowerCase(),
+    );
     if (match && props[match] !== null && props[match] !== undefined && props[match] !== "") {
       return props[match];
     }
@@ -2434,7 +2525,17 @@ function compactText(value: string, maxLength: number): string {
 
 function isCriticalRestriction(...values: string[]): boolean {
   const text = values.join(" ").toLowerCase();
-  return ["critical", "no-fly", "no fly", "closed", "closure", "prohibited", "conflict", "missile", "war"].some((term) => text.includes(term));
+  return [
+    "critical",
+    "no-fly",
+    "no fly",
+    "closed",
+    "closure",
+    "prohibited",
+    "conflict",
+    "missile",
+    "war",
+  ].some((term) => text.includes(term));
 }
 
 function parseTimestamp(value: unknown): Date | null {
@@ -2459,7 +2560,15 @@ function formatExpiry(expiresAt: Date | null, nowMs: number): string | null {
   return `Expires in ${minutes}m`;
 }
 
-function PlaybackLayer({ selectedId, enabled, trackData }: { selectedId: string | null; enabled: boolean; trackData: FlightTrackData | null }) {
+function PlaybackLayer({
+  selectedId,
+  enabled,
+  trackData,
+}: {
+  selectedId: string | null;
+  enabled: boolean;
+  trackData: FlightTrackData | null;
+}) {
   const [positions, setPositions] = useState<PlaybackPosition[]>([]);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -2523,13 +2632,20 @@ function PlaybackLayer({ selectedId, enabled, trackData }: { selectedId: string 
         radius={8}
         pathOptions={{ color: "#f59e0b", fillColor: "#f59e0b", fillOpacity: 0.9 }}
       />
-      <div ref={controlsRef} className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-4 bg-zinc-950/90 backdrop-blur-xl border border-white/10 px-5 py-3 rounded-full shadow-2xl">
+      <div
+        ref={controlsRef}
+        className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-4 bg-zinc-950/90 backdrop-blur-xl border border-white/10 px-5 py-3 rounded-full shadow-2xl"
+      >
         <button
           type="button"
           onClick={() => setPlaying((value) => !value)}
           className="flex items-center justify-center w-8 h-8 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
         >
-          {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+          {playing ? (
+            <Pause className="w-4 h-4 fill-current" />
+          ) : (
+            <Play className="w-4 h-4 fill-current ml-0.5" />
+          )}
         </button>
         <select
           value={speed}
@@ -2605,17 +2721,17 @@ function MapView({
   const selectedTrackSegments = useMemo(() => {
     const rawSegments: TrackRenderSegment[] = selectedFlightTrack
       ? selectedFlightTrack.segments
-        .map((segment): TrackRenderSegment => {
-          const points = segment.points.filter(
-            (point) => Number.isFinite(point.lat) && Number.isFinite(point.lon),
-          );
-          return {
-            id: segment.id,
-            points,
-            positions: points.map((point) => [point.lat, point.lon] as [number, number]),
-          };
-        })
-        .filter((segment) => segment.positions.length > 0)
+          .map((segment): TrackRenderSegment => {
+            const points = segment.points.filter(
+              (point) => Number.isFinite(point.lat) && Number.isFinite(point.lon),
+            );
+            return {
+              id: segment.id,
+              points,
+              positions: points.map((point) => [point.lat, point.lon] as [number, number]),
+            };
+          })
+          .filter((segment) => segment.positions.length > 0)
       : [];
 
     const livePoint = livePointFromFlight(selectedFlight);
@@ -2669,7 +2785,12 @@ function MapView({
   }, [enrichmentRoute]);
 
   const isRouteLikelyIncorrect = useMemo(() => {
-    if (!enrichmentRoute || !selectedFlight || selectedFlight.latitude === null || selectedFlight.longitude === null) {
+    if (
+      !enrichmentRoute ||
+      !selectedFlight ||
+      selectedFlight.latitude === null ||
+      selectedFlight.longitude === null
+    ) {
       return false;
     }
 
@@ -2720,8 +2841,10 @@ function MapView({
 
     // 3. Physical flight phase mismatch check (e.g. descending rapidly at the very start of a long route)
     if (total > 300 && pct < 30) {
-      const vSpeed = selectedFlight.vertical_rate !== null ? Number(selectedFlight.vertical_rate) * 196.85 : 0; // m/s -> fpm
-      const alt = selectedFlight.baro_altitude !== null ? Number(selectedFlight.baro_altitude) * 3.28084 : 0; // m -> ft
+      const vSpeed =
+        selectedFlight.vertical_rate !== null ? Number(selectedFlight.vertical_rate) * 196.85 : 0; // m/s -> fpm
+      const alt =
+        selectedFlight.baro_altitude !== null ? Number(selectedFlight.baro_altitude) * 3.28084 : 0; // m -> ft
       if (vSpeed < -800 && alt < 18000) {
         return true;
       }
@@ -2844,7 +2967,11 @@ function MapView({
         <PredictedPathLayer flights={flights} enabled={showPredictions} />
         <WeatherLayer airports={airports} enabled={showWeather} setLoading={setWeatherLoading} />
         <TfrLayer enabled={showTfr} setLoading={setTfrLoading} />
-        <PlaybackLayer selectedId={selectedId} enabled={showPlayback} trackData={selectedFlightTrack} />
+        <PlaybackLayer
+          selectedId={selectedId}
+          enabled={showPlayback}
+          trackData={selectedFlightTrack}
+        />
         {showSatellites && <SatelliteCanvasLayer satellites={satellites} />}
         <FlightCanvasLayer
           flights={flights}
@@ -2869,7 +2996,9 @@ function MapView({
             className="bg-transparent border-0 shadow-none m-0 p-0"
           >
             <div className="flex flex-col min-w-[240px] text-zinc-200 bg-zinc-950 border border-white/10 p-4 rounded-xl shadow-2xl font-sans text-xs">
-              <strong className="text-base text-white mb-0.5 tracking-tight">{selectedAirport.name}</strong>
+              <strong className="text-base text-white mb-0.5 tracking-tight">
+                {selectedAirport.name}
+              </strong>
               <span className="text-zinc-500 mb-4 leading-tight">
                 {[selectedAirport.city, selectedAirport.region, selectedAirport.country]
                   .filter(Boolean)
@@ -2878,19 +3007,27 @@ function MapView({
               <dl className="grid grid-cols-2 gap-y-3 gap-x-4 text-[10px] uppercase tracking-wider font-semibold text-zinc-500">
                 <div>
                   <dt className="mb-1">Code</dt>
-                  <dd className="text-zinc-200 normal-case tracking-normal">{getAirportCode(selectedAirport)}</dd>
+                  <dd className="text-zinc-200 normal-case tracking-normal">
+                    {getAirportCode(selectedAirport)}
+                  </dd>
                 </div>
                 <div>
                   <dt className="mb-1">Type</dt>
-                  <dd className="text-zinc-200 normal-case tracking-normal truncate">{getAirportTypeLabel(selectedAirport.type)}</dd>
+                  <dd className="text-zinc-200 normal-case tracking-normal truncate">
+                    {getAirportTypeLabel(selectedAirport.type)}
+                  </dd>
                 </div>
                 <div>
                   <dt className="mb-1">Country</dt>
-                  <dd className="text-zinc-200 normal-case tracking-normal">{selectedAirport.countryCode || "--"}</dd>
+                  <dd className="text-zinc-200 normal-case tracking-normal">
+                    {selectedAirport.countryCode || "--"}
+                  </dd>
                 </div>
                 <div>
                   <dt className="mb-1">Service</dt>
-                  <dd className="text-zinc-200 normal-case tracking-normal">{selectedAirport.scheduledService ? "Scheduled" : "Unscheduled"}</dd>
+                  <dd className="text-zinc-200 normal-case tracking-normal">
+                    {selectedAirport.scheduledService ? "Scheduled" : "Unscheduled"}
+                  </dd>
                 </div>
               </dl>
             </div>

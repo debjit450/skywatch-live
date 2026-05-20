@@ -669,7 +669,7 @@ function Index() {
               left: "24px",
               right: "auto",
               bottom: "24px",
-              zIndex: 1300
+              zIndex: 1300,
             }}
           />
         ) : selectedFlight && isPanelOpen && isFlightPanelMinimized ? (
@@ -685,7 +685,7 @@ function Index() {
               left: "24px",
               right: "auto",
               bottom: "24px",
-              zIndex: 1210
+              zIndex: 1210,
             }}
           />
         ) : (
@@ -882,10 +882,7 @@ function OnboardingTour({
   onSkip: () => void;
 }) {
   const steps = [
-    [
-      "Map overview",
-      "Track live aircraft, selected routes, predictions, and weather.",
-    ],
+    ["Map overview", "Track live aircraft, selected routes, predictions, and weather."],
     ["Flight search", "Use the dashboard search and filters to narrow the live feed."],
     ["Anomaly feed", "Open the anomaly tab to review live detector and custom-rule alerts."],
     ["Alert rules", "Create threshold rules or geofences from the alert rules panel."],

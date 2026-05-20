@@ -19,7 +19,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
     firCode: "UKFV",
     riskLevel: "Critical (No-Fly)",
     authority: "EASA / FAA / State CAAs",
-    reason: "Ongoing military conflict, high danger of active anti-aircraft warfare and missile systems.",
+    reason:
+      "Ongoing military conflict, high danger of active anti-aircraft warfare and missile systems.",
     altitudeLimits: "SFC - UNL",
     coordinates: [
       [52.0, 22.0],
@@ -29,8 +30,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [44.5, 36.5],
       [45.0, 32.5],
       [46.5, 30.0],
-      [48.0, 22.0]
-    ]
+      [48.0, 22.0],
+    ],
   },
   {
     id: "russia-border-restriction",
@@ -47,8 +48,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [46.0, 39.5],
       [47.0, 38.5],
       [49.0, 40.0],
-      [51.5, 39.0]
-    ]
+      [51.5, 39.0],
+    ],
   },
   {
     id: "iran-risk",
@@ -68,8 +69,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [24.0, 59.0],
       [26.0, 56.0],
       [30.0, 48.0],
-      [33.5, 46.0]
-    ]
+      [33.5, 46.0],
+    ],
   },
   {
     id: "iraq-risk",
@@ -88,8 +89,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [29.0, 48.0],
       [31.0, 44.0],
       [33.0, 39.0],
-      [34.5, 41.0]
-    ]
+      [34.5, 41.0],
+    ],
   },
   {
     id: "yemen-closure",
@@ -105,8 +106,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [19.0, 52.0],
       [16.5, 53.0],
       [12.0, 44.0],
-      [12.5, 43.0]
-    ]
+      [12.5, 43.0],
+    ],
   },
   {
     id: "syria-closure",
@@ -114,7 +115,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
     firCode: "OSTT",
     riskLevel: "Critical (No-Fly)",
     authority: "FAA / EASA",
-    reason: "Active combat zone, international military flights, and active air defense operations.",
+    reason:
+      "Active combat zone, international military flights, and active air defense operations.",
     altitudeLimits: "SFC - UNL",
     coordinates: [
       [37.0, 36.0],
@@ -124,8 +126,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [32.5, 39.0],
       [33.0, 36.0],
       [34.5, 36.0],
-      [36.0, 35.5]
-    ]
+      [36.0, 35.5],
+    ],
   },
   {
     id: "libya-closure",
@@ -143,8 +145,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [19.5, 24.0],
       [21.0, 19.0],
       [23.5, 12.0],
-      [26.0, 9.5]
-    ]
+      [26.0, 9.5],
+    ],
   },
   {
     id: "afghanistan-risk",
@@ -162,8 +164,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [31.5, 66.0],
       [30.0, 61.5],
       [35.5, 61.0],
-      [37.5, 66.5]
-    ]
+      [37.5, 66.5],
+    ],
   },
   {
     id: "north-korea-risk",
@@ -179,8 +181,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [39.0, 128.5],
       [37.5, 128.0],
       [38.0, 124.0],
-      [40.0, 124.0]
-    ]
+      [40.0, 124.0],
+    ],
   },
   {
     id: "myanmar-closure",
@@ -197,8 +199,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [17.0, 100.0],
       [9.5, 98.2],
       [10.0, 92.3],
-      [20.0, 92.0]
-    ]
+      [20.0, 92.0],
+    ],
   },
   {
     id: "sudan-closure",
@@ -206,7 +208,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
     firCode: "HSSS",
     riskLevel: "Critical (No-Fly)",
     authority: "ICAO / FAA / EASA",
-    reason: "Active armed conflict since 2023 with risks from air defense, artillery, and military aviation.",
+    reason:
+      "Active armed conflict since 2023 with risks from air defense, artillery, and military aviation.",
     altitudeLimits: "SFC - UNL",
     coordinates: [
       [22.0, 21.5],
@@ -214,8 +217,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [16.0, 38.5],
       [9.0, 35.5],
       [8.5, 24.0],
-      [12.0, 21.8]
-    ]
+      [12.0, 21.8],
+    ],
   },
   {
     id: "kashmir-loc-risk",
@@ -223,7 +226,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
     firCode: "VIDF / OPLR",
     riskLevel: "High Risk (Advisory)",
     authority: "ICAO / India / Pakistan CAAs",
-    reason: "India/Pakistan military boundary with periodic air defense alerts and cross-border escalation risk.",
+    reason:
+      "India/Pakistan military boundary with periodic air defense alerts and cross-border escalation risk.",
     altitudeLimits: "SFC - UNL",
     coordinates: [
       [35.7, 73.4],
@@ -231,8 +235,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [34.4, 76.4],
       [33.6, 74.9],
       [33.8, 73.7],
-      [34.8, 73.1]
-    ]
+      [34.8, 73.1],
+    ],
   },
   {
     id: "taiwan-strait-risk",
@@ -246,8 +250,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [26.8, 119.0],
       [25.8, 122.3],
       [22.0, 121.4],
-      [22.4, 118.0]
-    ]
+      [22.4, 118.0],
+    ],
   },
   {
     id: "south-china-sea-risk",
@@ -255,7 +259,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
     firCode: "ZJSA / RPHI / VVHM",
     riskLevel: "High Risk (Advisory)",
     authority: "ICAO / Regional CAAs",
-    reason: "Disputed airspace, military activity, Chinese ADIZ risk, and possible GNSS interference.",
+    reason:
+      "Disputed airspace, military activity, Chinese ADIZ risk, and possible GNSS interference.",
     altitudeLimits: "SFC - UNL",
     coordinates: [
       [23.0, 109.0],
@@ -263,8 +268,8 @@ export const CONFLICT_ZONES: ConflictZone[] = [
       [12.0, 121.0],
       [4.0, 112.0],
       [6.0, 105.0],
-      [16.0, 108.0]
-    ]
+      [16.0, 108.0],
+    ],
   },
   {
     id: "niger-sahel-risk",
@@ -272,14 +277,15 @@ export const CONFLICT_ZONES: ConflictZone[] = [
     firCode: "DRRR / GOOO / GABS / DFFD",
     riskLevel: "High Risk (Advisory)",
     authority: "ICAO / FAA / EASA",
-    reason: "Post-coup instability, armed groups, and degraded civil aviation safety oversight across the central Sahel.",
+    reason:
+      "Post-coup instability, armed groups, and degraded civil aviation safety oversight across the central Sahel.",
     altitudeLimits: "SFC - UNL",
     coordinates: [
       [23.5, -5.0],
       [23.5, 15.5],
       [11.0, 15.5],
       [9.5, 3.0],
-      [11.0, -5.0]
-    ]
-  }
+      [11.0, -5.0],
+    ],
+  },
 ];

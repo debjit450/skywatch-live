@@ -255,10 +255,16 @@ function AirportWeatherCard({
     return (
       <div className="bg-[var(--sw-surface-strong)] border border-[var(--sw-border)] rounded-xl p-3 flex flex-col justify-center min-h-[75px]">
         <div className="flex justify-between items-center mb-1">
-          <span className="text-[9px] font-semibold uppercase tracking-wider text-[var(--sw-muted)]">{label} Weather</span>
-          <span className="font-mono text-[10px] font-semibold text-[var(--sw-text)]">{airportCode}</span>
+          <span className="text-[9px] font-semibold uppercase tracking-wider text-[var(--sw-muted)]">
+            {label} Weather
+          </span>
+          <span className="font-mono text-[10px] font-semibold text-[var(--sw-text)]">
+            {airportCode}
+          </span>
         </div>
-        <span className="text-[9px] text-[var(--sw-muted)] italic">No real-time weather available</span>
+        <span className="text-[9px] text-[var(--sw-muted)] italic">
+          No real-time weather available
+        </span>
       </div>
     );
   }
@@ -296,7 +302,9 @@ function AirportWeatherCard({
                 />
                 {weather.wind_direction}°/{weather.wind_speed}kt
               </span>
-            ) : "Calm"}
+            ) : (
+              "Calm"
+            )}
           </span>
         </div>
         <div className="flex items-center gap-1.5 min-w-0">
@@ -320,7 +328,9 @@ function AirportWeatherCard({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[8px] font-semibold uppercase tracking-widest text-[var(--sw-muted)] leading-none">Raw METAR</span>
+        <span className="text-[8px] font-semibold uppercase tracking-widest text-[var(--sw-muted)] leading-none">
+          Raw METAR
+        </span>
         <p className="text-[9px] font-mono text-[var(--sw-muted)] bg-[var(--sw-surface-soft)] p-2 rounded-lg leading-relaxed break-words border border-[var(--sw-border)] select-text">
           {weather.raw}
         </p>
@@ -363,14 +373,17 @@ function FlightDetailPanel({
 
   useEffect(() => {
     const origIcao = enrichment?.route?.origin?.icaoCode || enrichment?.route?.origin?.iataCode;
-    const destIcao = enrichment?.route?.destination?.icaoCode || enrichment?.route?.destination?.iataCode;
+    const destIcao =
+      enrichment?.route?.destination?.icaoCode || enrichment?.route?.destination?.iataCode;
 
     if (!origIcao && !destIcao) {
       setTerminalWeather({ origin: null, destination: null, loading: false });
       return;
     }
 
-    const codes = [origIcao, destIcao].filter((c): c is string => typeof c === "string" && c.length >= 3);
+    const codes = [origIcao, destIcao].filter(
+      (c): c is string => typeof c === "string" && c.length >= 3,
+    );
     if (codes.length === 0) {
       setTerminalWeather({ origin: null, destination: null, loading: false });
       return;
@@ -387,10 +400,14 @@ function FlightDetailPanel({
         const destKey = destIcao?.toUpperCase();
         const entries = Object.values(weather);
         const originMetar = originKey
-          ? weather[originKey] || entries.find((item) => item.station?.toUpperCase().endsWith(originKey)) || null
+          ? weather[originKey] ||
+            entries.find((item) => item.station?.toUpperCase().endsWith(originKey)) ||
+            null
           : null;
         const destMetar = destKey
-          ? weather[destKey] || entries.find((item) => item.station?.toUpperCase().endsWith(destKey)) || null
+          ? weather[destKey] ||
+            entries.find((item) => item.station?.toUpperCase().endsWith(destKey)) ||
+            null
           : null;
 
         setTerminalWeather({
@@ -638,10 +655,11 @@ function FlightDetailPanel({
           className={`
           flex items-center gap-3 px-5 py-3 text-[10px] font-semibold tracking-wider uppercase
           border-b
-          ${isEmergency
+          ${
+            isEmergency
               ? "bg-[var(--sw-danger-soft)] border border-[var(--sw-danger-soft)] text-[var(--sw-rose)]"
               : "bg-[var(--sw-warning-soft)] border border-[var(--sw-warning-soft)] text-[var(--sw-amber)]"
-            }
+          }
         `}
         >
           <span
@@ -763,7 +781,6 @@ function FlightDetailPanel({
 
       {/* ── Scrollable Body ── */}
       <div className="overflow-y-auto overscroll-contain flex-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[var(--sw-border)]">
-
         {/* Anomaly & Alert Flags Deck */}
         {(anomaly || flight.squawk) && (
           <div className="px-6 py-4 border-b border-[var(--sw-border)] bg-[var(--sw-surface-strong)]">
@@ -772,42 +789,43 @@ function FlightDetailPanel({
             </p>
             <div className="flex flex-wrap gap-2">
               {flight.squawk && (
-                <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border ${isEmergency
-                    ? "bg-[var(--sw-danger-soft)] border border-[var(--sw-danger-soft)] text-[var(--sw-rose)]"
-                    : "bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] text-[var(--sw-text)]"
-                  }`}>
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border ${
+                    isEmergency
+                      ? "bg-[var(--sw-danger-soft)] border border-[var(--sw-danger-soft)] text-[var(--sw-rose)]"
+                      : "bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] text-[var(--sw-text)]"
+                  }`}
+                >
                   <Activity className="w-3 h-3" />
                   SQUAWK {flight.squawk}
                 </span>
               )}
-              {anomaly && anomaly.anomalies.map((item) => {
-                const Icon = anomalyIcons[item.type];
-                return (
-                  <span
-                    key={item.type}
-                    className={`
+              {anomaly &&
+                anomaly.anomalies.map((item) => {
+                  const Icon = anomalyIcons[item.type];
+                  return (
+                    <span
+                      key={item.type}
+                      className={`
                       inline-flex items-center gap-1.5
                       text-[9px] font-bold uppercase tracking-wider
                       px-2.5 py-1 rounded border
                       ${sevStyles[item.severity] ?? sevStyles.low}
                     `}
-                  >
-                    <Icon className="w-3 h-3" />
-                    {item.label}
-                  </span>
-                );
-              })}
+                    >
+                      <Icon className="w-3 h-3" />
+                      {item.label}
+                    </span>
+                  );
+                })}
             </div>
           </div>
         )}
 
         {/* Flight path progress strip */}
-        {progress &&
-          rt?.origin &&
-          rt?.destination &&
-          !isRouteLikelyIncorrect && (
-            <FlightPath progress={progress} origin={rt.origin} destination={rt.destination} />
-          )}
+        {progress && rt?.origin && rt?.destination && !isRouteLikelyIncorrect && (
+          <FlightPath progress={progress} origin={rt.origin} destination={rt.destination} />
+        )}
 
         {/* Aircraft photo */}
         {ac && (ac.photoUrl || ac.photoThumbUrl) && !imageError && (
@@ -828,7 +846,9 @@ function FlightDetailPanel({
                 <p className="font-mono text-[10px] font-bold text-[var(--sw-text)] tracking-widest uppercase">
                   {ac.registration || flight.icao24.toUpperCase()}
                 </p>
-                <p className="text-[10px] text-[var(--sw-muted)] mt-1">{ac.type || "Unknown type"}</p>
+                <p className="text-[10px] text-[var(--sw-muted)] mt-1">
+                  {ac.type || "Unknown type"}
+                </p>
               </div>
             </div>
           </div>
@@ -841,77 +861,128 @@ function FlightDetailPanel({
             rt?.airline ||
             rt?.callsignIata ||
             enrichmentLoading) && (
-              <Section title="Flight Plan & Route Context" icon={Navigation}>
-                {enrichmentLoading && !rt ? (
-                  <LoadingRow label="Fetching route intelligence" />
-                ) : (
-                  <>
-                    {!isRouteLikelyIncorrect && (
-                      <>
-                        <FullRow
-                          icon={MapPin}
-                          label="Origin Airport"
-                          value={rt?.origin?.name || "--"}
-                          sub={`${routeAirportLocation(rt?.origin)} • elev ${fmt(rt?.origin?.elevation ?? null, { digits: 0, suffix: " ft" })}${rt?.origin?.latitude !== undefined && rt?.origin?.longitude !== undefined
-                              ? ` • [${toDMS(rt.origin.latitude, true)} ${toDMS(rt.origin.longitude, false)}]`
-                              : ""
-                            }`}
-                          code={routeAirportCodes(rt?.origin)}
-                        />
-                        <FullRow
-                          icon={MapPin}
-                          label="Destination Airport"
-                          value={rt?.destination?.name || "--"}
-                          sub={`${routeAirportLocation(rt?.destination)} • elev ${fmt(rt?.destination?.elevation ?? null, { digits: 0, suffix: " ft" })}${rt?.destination?.latitude !== undefined && rt?.destination?.longitude !== undefined
-                              ? ` • [${toDMS(rt.destination.latitude, true)} ${toDMS(rt.destination.longitude, false)}]`
-                              : ""
-                            }`}
-                          code={routeAirportCodes(rt?.destination)}
-                        />
-                      </>
+            <Section title="Flight Plan & Route Context" icon={Navigation}>
+              {enrichmentLoading && !rt ? (
+                <LoadingRow label="Fetching route intelligence" />
+              ) : (
+                <>
+                  {!isRouteLikelyIncorrect && (
+                    <>
+                      <FullRow
+                        icon={MapPin}
+                        label="Origin Airport"
+                        value={rt?.origin?.name || "--"}
+                        sub={`${routeAirportLocation(rt?.origin)} • elev ${fmt(rt?.origin?.elevation ?? null, { digits: 0, suffix: " ft" })}${
+                          rt?.origin?.latitude !== undefined && rt?.origin?.longitude !== undefined
+                            ? ` • [${toDMS(rt.origin.latitude, true)} ${toDMS(rt.origin.longitude, false)}]`
+                            : ""
+                        }`}
+                        code={routeAirportCodes(rt?.origin)}
+                      />
+                      <FullRow
+                        icon={MapPin}
+                        label="Destination Airport"
+                        value={rt?.destination?.name || "--"}
+                        sub={`${routeAirportLocation(rt?.destination)} • elev ${fmt(rt?.destination?.elevation ?? null, { digits: 0, suffix: " ft" })}${
+                          rt?.destination?.latitude !== undefined &&
+                          rt?.destination?.longitude !== undefined
+                            ? ` • [${toDMS(rt.destination.latitude, true)} ${toDMS(rt.destination.longitude, false)}]`
+                            : ""
+                        }`}
+                        code={routeAirportCodes(rt?.destination)}
+                      />
+                    </>
+                  )}
+                  <div className="flex flex-col gap-1.5 mt-3">
+                    <Row
+                      icon={Signal}
+                      label="Airline"
+                      value={rt?.airline?.name || airline || "N/A"}
+                    />
+                    <Row
+                      icon={Hash}
+                      label="Flight Number"
+                      value={rt?.callsignIata || rt?.callsign || "N/A"}
+                      mono
+                    />
+                    {rt?.airline?.callsign && (
+                      <Row
+                        icon={Radio}
+                        label="Telephony Designator"
+                        value={rt.airline.callsign.toUpperCase()}
+                        highlight
+                      />
                     )}
-                    <div className="flex flex-col gap-1.5 mt-3">
-                      <Row icon={Signal} label="Airline" value={rt?.airline?.name || airline || "N/A"} />
-                      <Row icon={Hash} label="Flight Number" value={rt?.callsignIata || rt?.callsign || "N/A"} mono />
-                      {rt?.airline?.callsign && (
-                        <Row icon={Radio} label="Telephony Designator" value={rt.airline.callsign.toUpperCase()} highlight />
-                      )}
-                      {rt?.airline?.icao && (
-                        <Row icon={Hash} label="Airline ICAO / IATA" value={`${rt.airline.icao} / ${rt.airline.iata || "--"}`} mono />
-                      )}
-                      {rt?.airline?.country && (
-                        <Row icon={Globe} label="State of Operator" value={`${rt.airline.country} (${rt.airline.countryIso || "--"})`} />
-                      )}
-                      {rt?.routeSource && (
-                        <Row icon={Activity} label="Route Source" value={routeSourceLabel(rt.routeSource)} />
-                      )}
-                      {rt?.routeConfidence && (
-                        <Row
-                          icon={Target}
-                          label="Route Confidence Level"
-                          value={rt.routeConfidence.toUpperCase()}
-                          highlight={rt.routeConfidence === "high"}
-                          warn={rt.routeConfidence === "low"}
-                        />
-                      )}
+                    {rt?.airline?.icao && (
+                      <Row
+                        icon={Hash}
+                        label="Airline ICAO / IATA"
+                        value={`${rt.airline.icao} / ${rt.airline.iata || "--"}`}
+                        mono
+                      />
+                    )}
+                    {rt?.airline?.country && (
+                      <Row
+                        icon={Globe}
+                        label="State of Operator"
+                        value={`${rt.airline.country} (${rt.airline.countryIso || "--"})`}
+                      />
+                    )}
+                    {rt?.routeSource && (
+                      <Row
+                        icon={Activity}
+                        label="Route Source"
+                        value={routeSourceLabel(rt.routeSource)}
+                      />
+                    )}
+                    {rt?.routeConfidence && (
+                      <Row
+                        icon={Target}
+                        label="Route Confidence Level"
+                        value={rt.routeConfidence.toUpperCase()}
+                        highlight={rt.routeConfidence === "high"}
+                        warn={rt.routeConfidence === "low"}
+                      />
+                    )}
+                  </div>
+                  {rt?.routeWarning && (
+                    <div className="mt-2">
+                      <NoticeRow icon={AlertTriangle} value={rt.routeWarning} tone="warn" />
                     </div>
-                    {rt?.routeWarning && (
-                      <div className="mt-2">
-                        <NoticeRow icon={AlertTriangle} value={rt.routeWarning} tone="warn" />
-                      </div>
-                    )}
-                    {!isRouteLikelyIncorrect && progress?.total ? (
-                      <div className="flex flex-col gap-1.5 mt-2">
-                        <Row icon={Ruler} label="Direct Route Distance" value={`${fmt(progress.total, { digits: 0, suffix: " km" })}`} mono />
-                        <Row icon={Timer} label="Estimated Time Enroute" value={formatTrackDuration(progress.etaMinutes)} mono />
-                        <Row icon={RouteIcon} label="Distance Flown" value={fmt(progress.flown, { digits: 0, suffix: " km" })} mono />
-                        <Row icon={Crosshair} label="Cross-Track Deviation" value={fmt(progress.xtrackNm, { digits: 2, suffix: " NM" })} mono warn={progress.xtrackNm > 10} />
-                      </div>
-                    ) : null}
-                  </>
-                )}
-              </Section>
-            )}
+                  )}
+                  {!isRouteLikelyIncorrect && progress?.total ? (
+                    <div className="flex flex-col gap-1.5 mt-2">
+                      <Row
+                        icon={Ruler}
+                        label="Direct Route Distance"
+                        value={`${fmt(progress.total, { digits: 0, suffix: " km" })}`}
+                        mono
+                      />
+                      <Row
+                        icon={Timer}
+                        label="Estimated Time Enroute"
+                        value={formatTrackDuration(progress.etaMinutes)}
+                        mono
+                      />
+                      <Row
+                        icon={RouteIcon}
+                        label="Distance Flown"
+                        value={fmt(progress.flown, { digits: 0, suffix: " km" })}
+                        mono
+                      />
+                      <Row
+                        icon={Crosshair}
+                        label="Cross-Track Deviation"
+                        value={fmt(progress.xtrackNm, { digits: 2, suffix: " NM" })}
+                        mono
+                        warn={progress.xtrackNm > 10}
+                      />
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </Section>
+          )}
 
           {/* Terminal Weather Section */}
           {!isRouteLikelyIncorrect && (rt?.origin || rt?.destination) && (
@@ -945,12 +1016,47 @@ function FlightDetailPanel({
           {trackSummary ? (
             <Section title="Historical Telemetry Log" icon={History}>
               <div className="flex flex-col gap-1.5">
-                <Row icon={RouteIcon} label="Telemetry Source" value={flightTrack?.source === "opensky" ? "Live track" : "State log"} highlight />
-                <Row icon={Hash} label="Recorded Trajectory Points" value={flightTrack?.pointCount.toLocaleString() ?? "0"} mono />
-                <Row icon={Timer} label="Tracked Duration" value={formatTrackDuration(trackSummary.durationMinutes)} mono />
-                <Row icon={Ruler} label="Observed Distance" value={fmt(trackIntel?.distanceKm ?? flightTrack?.totalDistanceKm, { digits: 0, suffix: " km" })} mono />
-                <Row icon={Navigation} label="Flight Phase" value={trackIntel?.currentPhase ? trackIntel.currentPhase.toUpperCase() : "--"} highlight />
-                <Row icon={Activity} label="Signal Integrity Quality" value={trackIntel ? `${trackIntel.quality.score}%` : "--"} warn={trackIntel ? trackIntel.quality.score < 60 : false} highlight={trackIntel ? trackIntel.quality.score >= 75 : false} mono />
+                <Row
+                  icon={RouteIcon}
+                  label="Telemetry Source"
+                  value={flightTrack?.source === "opensky" ? "Live track" : "State log"}
+                  highlight
+                />
+                <Row
+                  icon={Hash}
+                  label="Recorded Trajectory Points"
+                  value={flightTrack?.pointCount.toLocaleString() ?? "0"}
+                  mono
+                />
+                <Row
+                  icon={Timer}
+                  label="Tracked Duration"
+                  value={formatTrackDuration(trackSummary.durationMinutes)}
+                  mono
+                />
+                <Row
+                  icon={Ruler}
+                  label="Observed Distance"
+                  value={fmt(trackIntel?.distanceKm ?? flightTrack?.totalDistanceKm, {
+                    digits: 0,
+                    suffix: " km",
+                  })}
+                  mono
+                />
+                <Row
+                  icon={Navigation}
+                  label="Flight Phase"
+                  value={trackIntel?.currentPhase ? trackIntel.currentPhase.toUpperCase() : "--"}
+                  highlight
+                />
+                <Row
+                  icon={Activity}
+                  label="Signal Integrity Quality"
+                  value={trackIntel ? `${trackIntel.quality.score}%` : "--"}
+                  warn={trackIntel ? trackIntel.quality.score < 60 : false}
+                  highlight={trackIntel ? trackIntel.quality.score >= 75 : false}
+                  mono
+                />
               </div>
 
               {trackIntel?.phaseBreakdown?.length ? (
@@ -977,7 +1083,9 @@ function FlightDetailPanel({
                       <span>{fmt(altitudeFt(point.alt), { digits: 0, suffix: "ft" })}</span>
                       <span>{fmt(speedKt(point.speed), { digits: 0, suffix: "kt" })}</span>
                       <span className="text-blue-400">
-                        {point.heading !== null ? fmt(point.heading, { digits: 0, suffix: "°" }) : "---"}
+                        {point.heading !== null
+                          ? fmt(point.heading, { digits: 0, suffix: "°" })
+                          : "---"}
                       </span>
                     </div>
                   ))}
@@ -1006,11 +1114,32 @@ function FlightDetailPanel({
                 <Row icon={Plane} label="Manufacturer" value={ac.manufacturer ?? "--"} />
                 <Row icon={Plane} label="Model" value={ac.type ?? "--"} />
                 <Row icon={Plane} label="ICAO Type" value={ac.icaoType ?? "--"} mono />
-                <Row icon={Hash} label="Registration Mark" value={ac.registration ?? "--"} mono highlight />
-                <Row icon={Hash} label="Operator ICAO Code" value={ac.operatorFlagCode ?? "--"} mono />
-                <Row icon={Globe} label="State of Registry" value={ac.ownerCountry ? `${ac.ownerCountry} (${ac.ownerCountryIso || "--"})` : "--"} />
+                <Row
+                  icon={Hash}
+                  label="Registration Mark"
+                  value={ac.registration ?? "--"}
+                  mono
+                  highlight
+                />
+                <Row
+                  icon={Hash}
+                  label="Operator ICAO Code"
+                  value={ac.operatorFlagCode ?? "--"}
+                  mono
+                />
+                <Row
+                  icon={Globe}
+                  label="State of Registry"
+                  value={
+                    ac.ownerCountry ? `${ac.ownerCountry} (${ac.ownerCountryIso || "--"})` : "--"
+                  }
+                />
                 <Row icon={Signal} label="Owner" value={ac.registeredOwner || "--"} />
-                <Row icon={Layers} label="Aircraft Category" value={getAircraftCategoryLabel(flight.category)} />
+                <Row
+                  icon={Layers}
+                  label="Aircraft Category"
+                  value={getAircraftCategoryLabel(flight.category)}
+                />
               </div>
             </Section>
           )}
@@ -1018,29 +1147,119 @@ function FlightDetailPanel({
           {/* Aerodynamics */}
           <Section title="Aerodynamic & Flight Dynamics" icon={Zap}>
             <div className="flex flex-col gap-1.5">
-              <Row icon={Gauge} label="Ground Speed (GS)" value={fmt(speed, { digits: 1, suffix: " kt" })} mono highlight />
-              <Row icon={Zap} label="Mach Number" value={fmt(mach, { digits: 3, suffix: " M" })} mono />
-              <Row icon={Wind} label="True Airspeed (TAS) Est." value={fmt(physics.tas, { digits: 1, suffix: " m/s" })} mono />
-              <Row icon={Wind} label="Calibrated Airspeed (CAS) Est." value={fmt(physics.cas, { digits: 1, suffix: " m/s" })} mono />
-              <Row icon={Target} label="Estimated Bank Angle" value={fmt(physics.bank, { digits: 1, suffix: "°" })} mono />
-              <Row icon={Activity} label="Normal Load Factor (G)" value={fmt(physics.gLoad, { digits: 2, suffix: " G" })} mono />
-              <Row icon={Thermometer} label="ISA Static Air Temperature" value={fmt(physics.isaT ? physics.isaT - 273.15 : null, { digits: 1, suffix: " °C" })} mono />
-              <Row icon={Ruler} label="Standard Rate Turn Radius" value={fmt(physics.turnRadius, { digits: 0, suffix: " m" })} mono />
+              <Row
+                icon={Gauge}
+                label="Ground Speed (GS)"
+                value={fmt(speed, { digits: 1, suffix: " kt" })}
+                mono
+                highlight
+              />
+              <Row
+                icon={Zap}
+                label="Mach Number"
+                value={fmt(mach, { digits: 3, suffix: " M" })}
+                mono
+              />
+              <Row
+                icon={Wind}
+                label="True Airspeed (TAS) Est."
+                value={fmt(physics.tas, { digits: 1, suffix: " m/s" })}
+                mono
+              />
+              <Row
+                icon={Wind}
+                label="Calibrated Airspeed (CAS) Est."
+                value={fmt(physics.cas, { digits: 1, suffix: " m/s" })}
+                mono
+              />
+              <Row
+                icon={Target}
+                label="Estimated Bank Angle"
+                value={fmt(physics.bank, { digits: 1, suffix: "°" })}
+                mono
+              />
+              <Row
+                icon={Activity}
+                label="Normal Load Factor (G)"
+                value={fmt(physics.gLoad, { digits: 2, suffix: " G" })}
+                mono
+              />
+              <Row
+                icon={Thermometer}
+                label="ISA Static Air Temperature"
+                value={fmt(physics.isaT ? physics.isaT - 273.15 : null, {
+                  digits: 1,
+                  suffix: " °C",
+                })}
+                mono
+              />
+              <Row
+                icon={Ruler}
+                label="Standard Rate Turn Radius"
+                value={fmt(physics.turnRadius, { digits: 0, suffix: " m" })}
+                mono
+              />
             </div>
           </Section>
 
           {/* Navigation */}
           <Section title="Navigation & Surveillance Signal" icon={Compass}>
             <div className="flex flex-col gap-1.5">
-              <Row icon={Satellite} label="Surveillance Source" value={flight.data_source ? getDataSourceInfo(flight.data_source).name : positionSourceLabel(flight.position_source)} highlight />
-              <Row icon={Signal} label="Signal Quality Index" value={`${sourceQuality.label} (${sourceQuality.accuracy})`} highlight />
-              <Row icon={Timer} label="Signal Latency / Age" value={`${signalAgeSeconds}s`} mono warn={signalAgeSeconds > 30} />
-              <Row icon={Hash} label="SSR Transponder Code (Squawk)" value={flight.squawk || "----"} mono highlight={isNotableSquawk(flight.squawk)} />
-              <Row icon={Radio} label="Special Position Identification (SPI)" value={flight.spi ? "IDENT" : "STBY"} highlight={!!flight.spi} />
-              <Row icon={Activity} label="State Estimation Confidence" value={fmt(prediction.confidenceScore * 100, { digits: 1, suffix: "%" })} warn={prediction.confidence === "low"} />
-              <Row icon={Mountain} label="On-Ground Status" value={flight.on_ground ? "On Ground" : "Airborne"} highlight={flight.on_ground} />
+              <Row
+                icon={Satellite}
+                label="Surveillance Source"
+                value={
+                  flight.data_source
+                    ? getDataSourceInfo(flight.data_source).name
+                    : positionSourceLabel(flight.position_source)
+                }
+                highlight
+              />
+              <Row
+                icon={Signal}
+                label="Signal Quality Index"
+                value={`${sourceQuality.label} (${sourceQuality.accuracy})`}
+                highlight
+              />
+              <Row
+                icon={Timer}
+                label="Signal Latency / Age"
+                value={`${signalAgeSeconds}s`}
+                mono
+                warn={signalAgeSeconds > 30}
+              />
+              <Row
+                icon={Hash}
+                label="SSR Transponder Code (Squawk)"
+                value={flight.squawk || "----"}
+                mono
+                highlight={isNotableSquawk(flight.squawk)}
+              />
+              <Row
+                icon={Radio}
+                label="Special Position Identification (SPI)"
+                value={flight.spi ? "IDENT" : "STBY"}
+                highlight={!!flight.spi}
+              />
+              <Row
+                icon={Activity}
+                label="State Estimation Confidence"
+                value={fmt(prediction.confidenceScore * 100, { digits: 1, suffix: "%" })}
+                warn={prediction.confidence === "low"}
+              />
+              <Row
+                icon={Mountain}
+                label="On-Ground Status"
+                value={flight.on_ground ? "On Ground" : "Airborne"}
+                highlight={flight.on_ground}
+              />
               {flight.sensors && (
-                <Row icon={Hash} label="Receiving Sensors" value={flight.sensors.length.toString()} mono />
+                <Row
+                  icon={Hash}
+                  label="Receiving Sensors"
+                  value={flight.sensors.length.toString()}
+                  mono
+                />
               )}
               {flight.latitude !== null && flight.longitude !== null && (
                 <Row
@@ -1075,12 +1294,38 @@ function FlightDetailPanel({
           {/* System Identity */}
           <Section title="System Identification (ICAO 24-bit)" icon={Hash}>
             <div className="flex flex-col gap-1.5">
-              <Row icon={Hash} label="ICAO 24-bit Address" value={flight.icao24.toUpperCase()} mono highlight />
+              <Row
+                icon={Hash}
+                label="ICAO 24-bit Address"
+                value={flight.icao24.toUpperCase()}
+                mono
+                highlight
+              />
               <Row icon={Globe} label="State of Registry" value={flight.origin_country} />
-              <Row icon={Mountain} label="Barometric Altitude" value={fmt(reportedAltFt, { digits: 0, suffix: " ft" })} mono />
-              <Row icon={Mountain} label="Geometric Altitude" value={fmt(geoAltFt, { digits: 0, suffix: " ft" })} mono />
-              <Row icon={Layers} label="Barometric-Geometric Offset" value={fmt(altDiffFt, { digits: 0, suffix: " ft", sign: true })} mono warn={altDiffFt !== null && Math.abs(altDiffFt) > 500} />
-              <Row icon={History} label="Trajectory Estimation Type" value={prediction.isPredicted ? "Kinematic" : "Raw ADS-B"} />
+              <Row
+                icon={Mountain}
+                label="Barometric Altitude"
+                value={fmt(reportedAltFt, { digits: 0, suffix: " ft" })}
+                mono
+              />
+              <Row
+                icon={Mountain}
+                label="Geometric Altitude"
+                value={fmt(geoAltFt, { digits: 0, suffix: " ft" })}
+                mono
+              />
+              <Row
+                icon={Layers}
+                label="Barometric-Geometric Offset"
+                value={fmt(altDiffFt, { digits: 0, suffix: " ft", sign: true })}
+                mono
+                warn={altDiffFt !== null && Math.abs(altDiffFt) > 500}
+              />
+              <Row
+                icon={History}
+                label="Trajectory Estimation Type"
+                value={prediction.isPredicted ? "Kinematic" : "Raw ADS-B"}
+              />
             </div>
           </Section>
 
@@ -1095,14 +1340,32 @@ function FlightDetailPanel({
                   <span>Hdg</span>
                 </div>
                 <div className="divide-y divide-white/5">
-                  {[...anomalyHistory].reverse().slice(0, 10).map((snap, i) => (
-                    <div key={i} className="grid grid-cols-4 px-3 py-2 text-[10px] font-mono text-zinc-300 hover:bg-white/5 transition-colors">
-                      <span className="text-zinc-500">{formatClock(snap.time * 1000)}</span>
-                      <span>{snap.altitude ? fmt(altitudeFt(snap.altitude), { digits: 0, suffix: "ft" }) : "---"}</span>
-                      <span>{snap.speed ? fmt(speedKt(snap.speed), { digits: 0, suffix: "kt" }) : "---"}</span>
-                      <span className="text-blue-400">{snap.heading !== null ? fmt(snap.heading, { digits: 0, suffix: "°" }) : "---"}</span>
-                    </div>
-                  ))}
+                  {[...anomalyHistory]
+                    .reverse()
+                    .slice(0, 10)
+                    .map((snap, i) => (
+                      <div
+                        key={i}
+                        className="grid grid-cols-4 px-3 py-2 text-[10px] font-mono text-zinc-300 hover:bg-white/5 transition-colors"
+                      >
+                        <span className="text-zinc-500">{formatClock(snap.time * 1000)}</span>
+                        <span>
+                          {snap.altitude
+                            ? fmt(altitudeFt(snap.altitude), { digits: 0, suffix: "ft" })
+                            : "---"}
+                        </span>
+                        <span>
+                          {snap.speed
+                            ? fmt(speedKt(snap.speed), { digits: 0, suffix: "kt" })
+                            : "---"}
+                        </span>
+                        <span className="text-blue-400">
+                          {snap.heading !== null
+                            ? fmt(snap.heading, { digits: 0, suffix: "°" })
+                            : "---"}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               </div>
             </Section>
@@ -1145,7 +1408,9 @@ function MetricTile({
       <div className="flex items-center gap-1">
         {trend === "up" && <TrendingUp className={`w-3 h-3 ${valueColor} flex-shrink-0`} />}
         {trend === "down" && <TrendingDown className={`w-3 h-3 ${valueColor} flex-shrink-0`} />}
-        <strong className={`text-[10px] font-mono font-semibold leading-none tracking-tight text-[var(--sw-text)]`}>
+        <strong
+          className={`text-[10px] font-mono font-semibold leading-none tracking-tight text-[var(--sw-text)]`}
+        >
           {value}
         </strong>
       </div>
@@ -1200,13 +1465,19 @@ function Row({
   highlight?: boolean;
   warn?: boolean;
 }) {
-  const valueColor = warn ? "text-[var(--sw-amber)]" : highlight ? "text-[var(--sw-blue)]" : "text-[var(--sw-text)]";
+  const valueColor = warn
+    ? "text-[var(--sw-amber)]"
+    : highlight
+      ? "text-[var(--sw-blue)]"
+      : "text-[var(--sw-text)]";
 
   return (
     <div className="flex items-center justify-between py-1.5 px-2 -mx-2 hover:bg-[var(--sw-surface-hover)] rounded-md transition-colors gap-3">
       <span className="flex items-center gap-2 text-[10px] text-[var(--sw-muted)] min-w-0 flex-1">
         <Icon className="w-3.5 h-3.5 flex-shrink-0 opacity-60" />
-        <span className="truncate" title={label}>{label}</span>
+        <span className="truncate" title={label}>
+          {label}
+        </span>
       </span>
       <span
         className={`
@@ -1243,9 +1514,15 @@ function FullRow({
           <Icon className="w-3.5 h-3.5 text-[var(--sw-muted)]" />
         </div>
         <div className="min-w-0">
-          <span className="block text-[9px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">{label}</span>
-          <strong className="block text-xs font-medium text-[var(--sw-text)] truncate">{value}</strong>
-          {sub && <span className="block text-[10px] text-[var(--sw-muted)] truncate mt-0.5">{sub}</span>}
+          <span className="block text-[9px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">
+            {label}
+          </span>
+          <strong className="block text-xs font-medium text-[var(--sw-text)] truncate">
+            {value}
+          </strong>
+          {sub && (
+            <span className="block text-[10px] text-[var(--sw-muted)] truncate mt-0.5">{sub}</span>
+          )}
         </div>
       </div>
       {code && (
@@ -1282,13 +1559,20 @@ function NoticeRow({
 /** Phase color helper */
 function phaseColor(phase: string): string {
   switch (phase) {
-    case "takeoff": return "bg-lime-500";
-    case "climb": return "bg-emerald-500";
-    case "cruise": return "bg-blue-500";
-    case "descent": return "bg-amber-500";
-    case "approach": return "bg-orange-500";
-    case "ground": return "bg-zinc-500";
-    default: return "bg-zinc-700";
+    case "takeoff":
+      return "bg-lime-500";
+    case "climb":
+      return "bg-emerald-500";
+    case "cruise":
+      return "bg-blue-500";
+    case "descent":
+      return "bg-amber-500";
+    case "approach":
+      return "bg-orange-500";
+    case "ground":
+      return "bg-zinc-500";
+    default:
+      return "bg-zinc-700";
   }
 }
 
@@ -1315,7 +1599,10 @@ function TrackPhaseStrip({ phases }: { phases: FlightTrackPhase[] }) {
             key={`${phase.phase}-${phase.endedAt}-${i}`}
             className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] text-[var(--sw-muted)]"
           >
-            {phase.phase} <span className="text-[var(--sw-dim)] ml-1">{formatTrackDuration(phase.durationMinutes)}</span>
+            {phase.phase}{" "}
+            <span className="text-[var(--sw-dim)] ml-1">
+              {formatTrackDuration(phase.durationMinutes)}
+            </span>
           </span>
         ))}
       </div>
@@ -1332,17 +1619,37 @@ function LayoverCard({ layover }: { layover: PanelLayover }) {
           <strong className="block font-mono text-xs font-semibold text-[var(--sw-amber)] leading-none mb-1">
             {layover.airportCode}
           </strong>
-          <span className="text-[10px] text-[var(--sw-muted)] truncate block">{layover.airportName}</span>
+          <span className="text-[10px] text-[var(--sw-muted)] truncate block">
+            {layover.airportName}
+          </span>
         </div>
         <span className="flex-shrink-0 bg-[var(--sw-warning-soft)] border border-[var(--sw-warning-soft)] px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider text-[var(--sw-amber)]">
           {formatTrackDuration(layover.durationMinutes)}
         </span>
       </div>
       <div className="grid grid-cols-2 gap-y-1.5 gap-x-3 text-[10px] border-t border-[var(--sw-border)] pt-2">
-        <span className="text-[var(--sw-muted)]">Codes <strong className="font-mono text-[var(--sw-text)] ml-1">{layover.airportCodes}</strong></span>
-        <span className="text-[var(--sw-muted)]">Match <strong className="font-mono text-[var(--sw-text)] ml-1">{fmt(layover.airportDistanceKm, { digits: 1, suffix: " km" })}</strong></span>
-        <span className="text-[var(--sw-muted)]">Start <strong className="font-mono text-[var(--sw-text)] ml-1">{formatTrackTime(layover.startTime)}</strong></span>
-        <span className="text-[var(--sw-muted)]">End <strong className="font-mono text-[var(--sw-text)] ml-1">{formatTrackTime(layover.endTime)}</strong></span>
+        <span className="text-[var(--sw-muted)]">
+          Codes{" "}
+          <strong className="font-mono text-[var(--sw-text)] ml-1">{layover.airportCodes}</strong>
+        </span>
+        <span className="text-[var(--sw-muted)]">
+          Match{" "}
+          <strong className="font-mono text-[var(--sw-text)] ml-1">
+            {fmt(layover.airportDistanceKm, { digits: 1, suffix: " km" })}
+          </strong>
+        </span>
+        <span className="text-[var(--sw-muted)]">
+          Start{" "}
+          <strong className="font-mono text-[var(--sw-text)] ml-1">
+            {formatTrackTime(layover.startTime)}
+          </strong>
+        </span>
+        <span className="text-[var(--sw-muted)]">
+          End{" "}
+          <strong className="font-mono text-[var(--sw-text)] ml-1">
+            {formatTrackTime(layover.endTime)}
+          </strong>
+        </span>
       </div>
     </div>
   );
@@ -1383,18 +1690,25 @@ function FlightPath({
           <span className="text-sm font-bold font-mono text-[var(--sw-text)] tracking-tight leading-none">
             {origin.iataCode || origin.icaoCode}
           </span>
-          <p className="text-[9px] text-[var(--sw-muted)] mt-0.5 leading-none font-medium">{origin.municipality}</p>
+          <p className="text-[9px] text-[var(--sw-muted)] mt-0.5 leading-none font-medium">
+            {origin.municipality}
+          </p>
         </div>
         <div className="flex items-center justify-center flex-1 px-3 text-[var(--sw-dim)]">
           <div className="h-px flex-1 bg-[var(--sw-border)]" />
-          <Plane className="w-3.5 h-3.5 mx-2 text-blue-500" style={{ transform: "rotate(45deg)" }} />
+          <Plane
+            className="w-3.5 h-3.5 mx-2 text-blue-500"
+            style={{ transform: "rotate(45deg)" }}
+          />
           <div className="h-px flex-1 bg-[var(--sw-border)]" />
         </div>
         <div className="text-right">
           <span className="text-sm font-bold font-mono text-[var(--sw-text)] tracking-tight leading-none">
             {destination.iataCode || destination.icaoCode}
           </span>
-          <p className="text-[9px] text-[var(--sw-muted)] mt-0.5 leading-none font-medium">{destination.municipality}</p>
+          <p className="text-[9px] text-[var(--sw-muted)] mt-0.5 leading-none font-medium">
+            {destination.municipality}
+          </p>
         </div>
       </div>
 
@@ -1406,7 +1720,7 @@ function FlightPath({
         />
         <div
           className="absolute transition-all duration-1000 ease-out"
-          style={{ left: `${progress.pct}%`, top: '50%', marginTop: '-5px', marginLeft: '-5px' }}
+          style={{ left: `${progress.pct}%`, top: "50%", marginTop: "-5px", marginLeft: "-5px" }}
         >
           <div className="w-2.5 h-2.5 bg-white rounded-full shadow-[0_0_8px_rgba(59,130,246,0.8)] border-2 border-blue-500" />
         </div>
@@ -1415,15 +1729,25 @@ function FlightPath({
       {/* Stats */}
       <div className="flex justify-between items-center text-center">
         <div className="text-left">
-          <p className="text-[8px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">Flown</p>
-          <p className="text-[10px] font-mono font-medium text-[var(--sw-text)]">{Math.round(progress.flown)} km</p>
+          <p className="text-[8px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">
+            Flown
+          </p>
+          <p className="text-[10px] font-mono font-medium text-[var(--sw-text)]">
+            {Math.round(progress.flown)} km
+          </p>
         </div>
         <div>
-          <p className="text-[8px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">Progress</p>
-          <p className="text-[10px] font-mono font-medium text-blue-400">{progress.pct.toFixed(1)}%</p>
+          <p className="text-[8px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">
+            Progress
+          </p>
+          <p className="text-[10px] font-mono font-medium text-blue-400">
+            {progress.pct.toFixed(1)}%
+          </p>
         </div>
         <div className="text-right">
-          <p className="text-[8px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">ETA</p>
+          <p className="text-[8px] font-semibold uppercase tracking-wider text-[var(--sw-dim)] mb-0.5">
+            ETA
+          </p>
           <p className="text-[10px] font-mono font-medium text-[var(--sw-text)]">{eta}</p>
         </div>
       </div>

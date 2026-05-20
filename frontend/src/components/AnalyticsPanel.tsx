@@ -94,7 +94,9 @@ export default function AnalyticsPanel({
       const failed = [trafficResult, routeResult, rateResult, typeResult].some(
         (result) => result.status === "rejected",
       );
-      setErrorMessage(failed ? "Showing live fallback until historical analytics are reachable." : null);
+      setErrorMessage(
+        failed ? "Showing live fallback until historical analytics are reachable." : null,
+      );
     } finally {
       setLoading(false);
     }
@@ -159,7 +161,11 @@ export default function AnalyticsPanel({
             </LineChart>
           </ResponsiveContainer>
         </ChartBlock>
-        <ChartBlock title="Aircraft Classification Categories" dataType="aircraft_types" rows={types}>
+        <ChartBlock
+          title="Aircraft Classification Categories"
+          dataType="aircraft_types"
+          rows={types}
+        >
           <ResponsiveContainer width="100%" height={180}>
             <PieChart>
               <Tooltip />
@@ -219,7 +225,10 @@ function buildLiveAnalytics(flights: Flight[], anomalies: AnomalousFlight[]) {
   const byCountry = new Map<string, number>();
   const byType = new Map<string, number>();
   for (const flight of flights) {
-    byCountry.set(flight.origin_country || "Unknown", (byCountry.get(flight.origin_country || "Unknown") || 0) + 1);
+    byCountry.set(
+      flight.origin_country || "Unknown",
+      (byCountry.get(flight.origin_country || "Unknown") || 0) + 1,
+    );
     const type = aircraftCategoryLabel(flight.category);
     byType.set(type, (byType.get(type) || 0) + 1);
   }

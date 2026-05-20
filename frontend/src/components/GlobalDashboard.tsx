@@ -321,8 +321,12 @@ function GlobalDashboard({
             <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-emerald-500"></span>
           </div>
           <div className="flex flex-col items-center" style={{ writingMode: "vertical-rl" }}>
-            <strong className="text-xs font-mono text-blue-400 font-bold tracking-wider">{activeCount.toLocaleString()}</strong>
-            <span className="text-[9px] font-semibold text-[var(--sw-dim)] uppercase tracking-widest mt-1">Live</span>
+            <strong className="text-xs font-mono text-blue-400 font-bold tracking-wider">
+              {activeCount.toLocaleString()}
+            </strong>
+            <span className="text-[9px] font-semibold text-[var(--sw-dim)] uppercase tracking-widest mt-1">
+              Live
+            </span>
           </div>
         </div>
       </aside>
@@ -342,10 +346,13 @@ function GlobalDashboard({
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <Globe className="h-4 w-4 text-blue-400" />
-                <h2 className="text-sm font-bold text-[var(--sw-text)] tracking-wide">Surveillance Operations Control Panel</h2>
+                <h2 className="text-sm font-bold text-[var(--sw-text)] tracking-wide">
+                  Surveillance Operations Control Panel
+                </h2>
               </div>
               <p className="text-[10px] text-[var(--sw-muted)] font-medium">
-                {activeCount.toLocaleString()} active surveillance tracks / {totalFlights.toLocaleString()} total target files
+                {activeCount.toLocaleString()} active surveillance tracks /{" "}
+                {totalFlights.toLocaleString()} total target files
               </p>
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] p-1 rounded-lg">
@@ -425,7 +432,6 @@ function GlobalDashboard({
 
         {/* ── Body ── */}
         <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 overscroll-contain">
-
           {/* TAB: GLOBAL OVERVIEW */}
           <Tabs.Content value="global" className="h-full flex flex-col p-4 gap-4 outline-none">
             {isLoading && totalFlights === 0 ? (
@@ -439,12 +445,21 @@ function GlobalDashboard({
             ) : (
               <>
                 <section className="bg-white/5 border border-white/5 rounded-xl p-4">
-                  <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-3">Feed Surveillance Metrics</h3>
+                  <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-3">
+                    Feed Surveillance Metrics
+                  </h3>
                   <div className="grid grid-cols-2 gap-2">
                     <SummaryTile value={inAirCount.toLocaleString()} label="Airborne Tracks" />
                     <SummaryTile value={groundCount.toLocaleString()} label="Surface Tracks" />
-                    <SummaryTile value={anomalies.length.toLocaleString()} label="Anomalous Tracks" highlight />
-                    <SummaryTile value={Math.max(totalFlights - activeCount, 0).toLocaleString()} label="Filtered / Hidden Tracks" />
+                    <SummaryTile
+                      value={anomalies.length.toLocaleString()}
+                      label="Anomalous Tracks"
+                      highlight
+                    />
+                    <SummaryTile
+                      value={Math.max(totalFlights - activeCount, 0).toLocaleString()}
+                      label="Filtered / Hidden Tracks"
+                    />
                   </div>
                 </section>
 
@@ -456,13 +471,25 @@ function GlobalDashboard({
                     </h3>
                     <ul className="divide-y divide-white/5">
                       {sourceCounts.map(({ key, count, info }) => (
-                        <li key={key} className="flex items-center justify-between py-2 hover:bg-white/5 px-2 -mx-2 rounded-md transition-colors">
+                        <li
+                          key={key}
+                          className="flex items-center justify-between py-2 hover:bg-white/5 px-2 -mx-2 rounded-md transition-colors"
+                        >
                           <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: info.color }} />
-                            <span className="text-xs text-zinc-300 font-medium truncate">{info.shortName}</span>
-                            <span className="text-[10px] text-zinc-500 px-1 border border-white/10 rounded">{info.type}</span>
+                            <span
+                              className="w-2 h-2 rounded-full"
+                              style={{ backgroundColor: info.color }}
+                            />
+                            <span className="text-xs text-zinc-300 font-medium truncate">
+                              {info.shortName}
+                            </span>
+                            <span className="text-[10px] text-zinc-500 px-1 border border-white/10 rounded">
+                              {info.type}
+                            </span>
                           </div>
-                          <span className="text-xs font-mono text-zinc-400">{count.toLocaleString()}</span>
+                          <span className="text-xs font-mono text-zinc-400">
+                            {count.toLocaleString()}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -472,26 +499,53 @@ function GlobalDashboard({
                 <section className="bg-white/5 border border-white/5 rounded-xl p-4">
                   <h3 className="flex justify-between items-center text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-3">
                     <span>Space Layer</span>
-                    <span className="text-zinc-500">{satelliteStatus === "ready" ? "SGP4" : satelliteStatus}</span>
+                    <span className="text-zinc-500">
+                      {satelliteStatus === "ready" ? "SGP4" : satelliteStatus}
+                    </span>
                   </h3>
                   {satellites.length > 0 ? (
                     <>
                       <div className="grid grid-cols-2 gap-2 mb-3">
-                        <SummaryTile value={satellites.length.toLocaleString()} label="Orbiting Satellite Objects" />
-                        <SummaryTile value={satelliteSummary.leo.toLocaleString()} label="Low Earth Orbit (LEO)" />
-                        <SummaryTile value={satelliteSummary.stations.toLocaleString()} label="Space Stations" />
-                        <SummaryTile value={satelliteSummary.degraded.toLocaleString()} label="Stale / Degraded TLE States" warn={satelliteSummary.degraded > 0} />
+                        <SummaryTile
+                          value={satellites.length.toLocaleString()}
+                          label="Orbiting Satellite Objects"
+                        />
+                        <SummaryTile
+                          value={satelliteSummary.leo.toLocaleString()}
+                          label="Low Earth Orbit (LEO)"
+                        />
+                        <SummaryTile
+                          value={satelliteSummary.stations.toLocaleString()}
+                          label="Space Stations"
+                        />
+                        <SummaryTile
+                          value={satelliteSummary.degraded.toLocaleString()}
+                          label="Stale / Degraded TLE States"
+                          warn={satelliteSummary.degraded > 0}
+                        />
                       </div>
                       {satelliteSummary.activeGroups.length > 0 && (
                         <ul className="divide-y divide-white/5 mt-2 border-t border-white/5 pt-2">
                           {satelliteSummary.activeGroups.map((group) => (
-                            <li key={group.key} className="flex items-center justify-between py-2 hover:bg-white/5 px-2 -mx-2 rounded-md transition-colors">
+                            <li
+                              key={group.key}
+                              className="flex items-center justify-between py-2 hover:bg-white/5 px-2 -mx-2 rounded-md transition-colors"
+                            >
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: group.color }} />
-                                <span className="text-xs text-zinc-300 font-medium truncate">{group.name}</span>
-                                <span className="text-[10px] text-zinc-500 px-1 border border-white/10 rounded">CelesTrak</span>
+                                <span
+                                  className="w-2 h-2 rounded-full"
+                                  style={{ backgroundColor: group.color }}
+                                />
+                                <span className="text-xs text-zinc-300 font-medium truncate">
+                                  {group.name}
+                                </span>
+                                <span className="text-[10px] text-zinc-500 px-1 border border-white/10 rounded">
+                                  CelesTrak
+                                </span>
                               </div>
-                              <span className="text-xs font-mono text-zinc-400">{group.count.toLocaleString()}</span>
+                              <span className="text-xs font-mono text-zinc-400">
+                                {group.count.toLocaleString()}
+                              </span>
                             </li>
                           ))}
                         </ul>
@@ -525,9 +579,15 @@ function GlobalDashboard({
                 </section>
 
                 <section className="bg-white/5 border border-white/5 rounded-xl overflow-hidden flex flex-col">
-                  <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 p-4 border-b border-white/5">Priority Flights</h3>
+                  <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 p-4 border-b border-white/5">
+                    Priority Flights
+                  </h3>
                   <ErrorBoundary label="Priority flights">
-                    <FlightFeedList flights={recentFlights} selectedId={selectedId} onSelect={onSelect} />
+                    <FlightFeedList
+                      flights={recentFlights}
+                      selectedId={selectedId}
+                      onSelect={onSelect}
+                    />
                   </ErrorBoundary>
                 </section>
               </>
@@ -537,7 +597,9 @@ function GlobalDashboard({
           {/* TAB: SEARCH FLIGHTS */}
           <Tabs.Content value="flights" className="h-full flex flex-col outline-none">
             {isLoading && totalFlights === 0 ? (
-              <div className="p-4"><FeedSkeleton /></div>
+              <div className="p-4">
+                <FeedSkeleton />
+              </div>
             ) : flights.length === 0 ? (
               <EmptyState
                 icon={<Search className="w-8 h-8 opacity-20" />}
@@ -547,42 +609,69 @@ function GlobalDashboard({
             ) : (
               <div className="flex-1 min-h-0 flex flex-col">
                 <div className="flex justify-between items-center p-4 border-b border-white/5 bg-white/[0.02]">
-                  <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400">Matched Flights</span>
-                  <span className="text-xs font-mono font-medium text-blue-400">{flights.length.toLocaleString()}</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+                    Matched Flights
+                  </span>
+                  <span className="text-xs font-mono font-medium text-blue-400">
+                    {flights.length.toLocaleString()}
+                  </span>
                 </div>
                 <ErrorBoundary label="Flight list">
-                  <FlightFeedList flights={flights} selectedId={selectedId} onSelect={onSelect} virtualized />
+                  <FlightFeedList
+                    flights={flights}
+                    selectedId={selectedId}
+                    onSelect={onSelect}
+                    virtualized
+                  />
                 </ErrorBoundary>
               </div>
             )}
           </Tabs.Content>
 
           {/* TAB: ANOMALIES */}
-          <Tabs.Content value="anomalies" className="h-full flex flex-col outline-none overflow-hidden">
+          <Tabs.Content
+            value="anomalies"
+            className="h-full flex flex-col outline-none overflow-hidden"
+          >
             {/* Tactical anomaly filters */}
             <div className="flex items-center gap-3 p-4 bg-emerald-950/20 border-b border-emerald-500/10 shrink-0">
               <div className="flex-1 min-w-0">
-                <label className="text-[9px] font-bold uppercase tracking-widest text-emerald-400/60 block mb-1.5">Anomaly Type</label>
+                <label className="text-[9px] font-bold uppercase tracking-widest text-emerald-400/60 block mb-1.5">
+                  Anomaly Type
+                </label>
                 <select
                   value={filters.anomalyType || "all"}
-                  onChange={(e) => onFiltersChange((curr) => ({ ...curr, anomalyType: e.target.value }))}
+                  onChange={(e) =>
+                    onFiltersChange((curr) => ({ ...curr, anomalyType: e.target.value }))
+                  }
                   className="w-full bg-zinc-950 border border-emerald-500/20 text-emerald-100 text-xs rounded-md px-2 py-1.5 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 transition-shadow appearance-none"
                 >
                   <option value="all">All Types</option>
                   {Object.entries(ANOMALY_TYPE_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
                   ))}
                 </select>
               </div>
               <div className="flex-1 min-w-0">
-                <label className="text-[9px] font-bold uppercase tracking-widest text-emerald-400/60 block mb-1.5">Min Severity</label>
+                <label className="text-[9px] font-bold uppercase tracking-widest text-emerald-400/60 block mb-1.5">
+                  Min Severity
+                </label>
                 <select
                   value={filters.severity || "all"}
-                  onChange={(e) => onFiltersChange((curr) => ({ ...curr, severity: e.target.value as SeverityFilter }))}
+                  onChange={(e) =>
+                    onFiltersChange((curr) => ({
+                      ...curr,
+                      severity: e.target.value as SeverityFilter,
+                    }))
+                  }
                   className="w-full bg-zinc-950 border border-emerald-500/20 text-emerald-100 text-xs rounded-md px-2 py-1.5 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 transition-shadow appearance-none"
                 >
                   {SEVERITY_FILTERS.map((item) => (
-                    <option key={item.value} value={item.value}>{item.label}</option>
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -590,12 +679,15 @@ function GlobalDashboard({
 
             <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
               {isLoading && anomalies.length === 0 ? (
-                <div className="p-4"><FeedSkeleton /></div>
+                <div className="p-4">
+                  <FeedSkeleton />
+                </div>
               ) : (
                 (() => {
                   const filteredAnomalies = anomalies.filter((anomaly) => {
                     if (filters.anomalyType && filters.anomalyType !== "all") {
-                      if (!anomaly.anomalies.some((a) => a.type === filters.anomalyType)) return false;
+                      if (!anomaly.anomalies.some((a) => a.type === filters.anomalyType))
+                        return false;
                     }
                     if (filters.severity && filters.severity !== "all") {
                       const sev = topSeverity(anomaly.anomalies);
@@ -610,8 +702,12 @@ function GlobalDashboard({
                   return filteredAnomalies.length === 0 ? (
                     <EmptyState
                       icon={<AlertTriangle className="w-8 h-8 opacity-20 text-emerald-400" />}
-                      title={activeFilterCount > 0 ? "No matching anomalies" : "No active anomalies"}
-                      detail={status === "error" ? "Flight feed is offline" : "Monitoring is active"}
+                      title={
+                        activeFilterCount > 0 ? "No matching anomalies" : "No active anomalies"
+                      }
+                      detail={
+                        status === "error" ? "Flight feed is offline" : "Monitoring is active"
+                      }
                     />
                   ) : (
                     <>
@@ -639,29 +735,45 @@ function GlobalDashboard({
                               <button
                                 type="button"
                                 onClick={() => onSelect(anomaly.icao24)}
-                                className={`w-full text-left p-4 hover:bg-white/5 focus:bg-white/5 outline-none transition-colors border-l-2 ${isSelected ? "border-emerald-500 bg-white/5" : "border-transparent"
-                                  }`}
+                                className={`w-full text-left p-4 hover:bg-white/5 focus:bg-white/5 outline-none transition-colors border-l-2 ${
+                                  isSelected
+                                    ? "border-emerald-500 bg-white/5"
+                                    : "border-transparent"
+                                }`}
                               >
                                 <div className="flex items-start justify-between gap-2 mb-2">
                                   <div className="flex min-w-0 items-center gap-2">
                                     <Icon className={`w-4 h-4 flex-shrink-0 ${iconColor}`} />
-                                    <span className="text-sm font-semibold text-white truncate">{primary.label}</span>
+                                    <span className="text-sm font-semibold text-white truncate">
+                                      {primary.label}
+                                    </span>
                                   </div>
-                                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${badgeColor}`}>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${badgeColor}`}
+                                  >
                                     {sev}
                                   </span>
                                 </div>
                                 <div className="flex justify-between items-center text-xs mb-1">
-                                  <span className="font-mono text-zinc-300 font-medium">{anomaly.callsign?.trim() || "UNKNOWN"}</span>
-                                  <span className="text-zinc-500">{relativeTime(anomaly.detectedAt)} ago</span>
+                                  <span className="font-mono text-zinc-300 font-medium">
+                                    {anomaly.callsign?.trim() || "UNKNOWN"}
+                                  </span>
+                                  <span className="text-zinc-500">
+                                    {relativeTime(anomaly.detectedAt)} ago
+                                  </span>
                                 </div>
                                 <div className="flex justify-between items-center text-xs text-zinc-500">
-                                  <span className="truncate pr-2">{airline || anomaly.origin_country}</span>
-                                  <span className="font-mono tracking-wider">{countryCode(anomaly.origin_country)}</span>
+                                  <span className="truncate pr-2">
+                                    {airline || anomaly.origin_country}
+                                  </span>
+                                  <span className="font-mono tracking-wider">
+                                    {countryCode(anomaly.origin_country)}
+                                  </span>
                                 </div>
                                 {anomaly.anomalies.length > 1 && (
                                   <div className="mt-2 text-[10px] text-zinc-400 bg-white/5 rounded px-2 py-1 w-fit">
-                                    +{anomaly.anomalies.length - 1} additional flag{anomaly.anomalies.length > 2 ? "s" : ""}
+                                    +{anomaly.anomalies.length - 1} additional flag
+                                    {anomaly.anomalies.length > 2 ? "s" : ""}
                                   </div>
                                 )}
                               </button>
@@ -691,12 +803,30 @@ export default memo(GlobalDashboard);
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-function SummaryTile({ value, label, highlight, warn }: { value: string; label: string; highlight?: boolean; warn?: boolean }) {
-  const valueColor = warn ? "text-[var(--sw-amber)]" : highlight ? "text-[var(--sw-blue)]" : "text-[var(--sw-text)]";
+function SummaryTile({
+  value,
+  label,
+  highlight,
+  warn,
+}: {
+  value: string;
+  label: string;
+  highlight?: boolean;
+  warn?: boolean;
+}) {
+  const valueColor = warn
+    ? "text-[var(--sw-amber)]"
+    : highlight
+      ? "text-[var(--sw-blue)]"
+      : "text-[var(--sw-text)]";
   return (
     <div className="bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] rounded-lg p-3 flex flex-col justify-center">
-      <span className={`text-lg font-mono font-medium leading-none mb-1 ${valueColor}`}>{value}</span>
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--sw-muted)]">{label}</span>
+      <span className={`text-lg font-mono font-medium leading-none mb-1 ${valueColor}`}>
+        {value}
+      </span>
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--sw-muted)]">
+        {label}
+      </span>
     </div>
   );
 }
@@ -735,7 +865,11 @@ function FilterWorkbench({
             className="bg-transparent text-xs text-[var(--sw-text)] placeholder-[var(--sw-dim)] w-full outline-none"
           />
           {filters.query && (
-            <button type="button" onClick={() => setFilter("query", "")} className="text-[var(--sw-muted)] hover:text-[var(--sw-text)] ml-2">
+            <button
+              type="button"
+              onClick={() => setFilter("query", "")}
+              className="text-[var(--sw-muted)] hover:text-[var(--sw-text)] ml-2"
+            >
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -743,8 +877,11 @@ function FilterWorkbench({
         <div className="flex gap-1">
           <button
             type="button"
-            className={`flex items-center justify-center w-8 h-8 rounded-md border transition-colors ${showAdvanced ? "bg-blue-500/10 border-blue-500/30 text-blue-400" : "bg-[var(--sw-surface-soft)] border-[var(--sw-border)] text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)]"
-              }`}
+            className={`flex items-center justify-center w-8 h-8 rounded-md border transition-colors ${
+              showAdvanced
+                ? "bg-blue-500/10 border-blue-500/30 text-blue-400"
+                : "bg-[var(--sw-surface-soft)] border-[var(--sw-border)] text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)]"
+            }`}
             onClick={() => setShowAdvanced(!showAdvanced)}
             title="Toggle advanced filters"
           >
@@ -769,8 +906,11 @@ function FilterWorkbench({
               <button
                 type="button"
                 key={item.value}
-                className={`text-[10px] font-bold uppercase tracking-wider py-1.5 rounded transition-colors ${filters.mode === item.value ? "bg-[var(--sw-surface-hover)] text-[var(--sw-text)]" : "text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)]"
-                  }`}
+                className={`text-[10px] font-bold uppercase tracking-wider py-1.5 rounded transition-colors ${
+                  filters.mode === item.value
+                    ? "bg-[var(--sw-surface-hover)] text-[var(--sw-text)]"
+                    : "text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)]"
+                }`}
                 onClick={() => setFilter("mode", item.value as FlightFilterMode)}
               >
                 {item.label}
@@ -779,38 +919,106 @@ function FilterWorkbench({
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-4">
-            <FilterSelect label="Class" value={filters.aircraftClass} onChange={(v) => setFilter("aircraftClass", v)}>
+            <FilterSelect
+              label="Class"
+              value={filters.aircraftClass}
+              onChange={(v) => setFilter("aircraftClass", v)}
+            >
               <option value="all">Any class</option>
-              {legendClasses.map((cls) => (<option key={cls.key} value={cls.key}>{cls.label}</option>))}
+              {legendClasses.map((cls) => (
+                <option key={cls.key} value={cls.key}>
+                  {cls.label}
+                </option>
+              ))}
             </FilterSelect>
 
-            <FilterSelect label="Country" value={filters.country} onChange={(v) => setFilter("country", v)}>
+            <FilterSelect
+              label="Country"
+              value={filters.country}
+              onChange={(v) => setFilter("country", v)}
+            >
               <option value="all">Any country</option>
-              {countryOptions.map(([country, count]) => (<option key={country} value={country}>{country} ({count})</option>))}
+              {countryOptions.map(([country, count]) => (
+                <option key={country} value={country}>
+                  {country} ({count})
+                </option>
+              ))}
             </FilterSelect>
 
-            <FilterSelect label="Altitude" value={filters.altitudeBand} onChange={(v) => setFilter("altitudeBand", v as AltitudeBand)}>
-              {ALTITUDE_BANDS.map((item) => (<option key={item.value} value={item.value}>{item.label}</option>))}
+            <FilterSelect
+              label="Altitude"
+              value={filters.altitudeBand}
+              onChange={(v) => setFilter("altitudeBand", v as AltitudeBand)}
+            >
+              {ALTITUDE_BANDS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
             </FilterSelect>
 
-            <FilterSelect label="Speed" value={filters.speedBand} onChange={(v) => setFilter("speedBand", v as SpeedBand)}>
-              {SPEED_BANDS.map((item) => (<option key={item.value} value={item.value}>{item.label}</option>))}
+            <FilterSelect
+              label="Speed"
+              value={filters.speedBand}
+              onChange={(v) => setFilter("speedBand", v as SpeedBand)}
+            >
+              {SPEED_BANDS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
             </FilterSelect>
 
-            <FilterSelect label="Vertical" value={filters.verticalBand} onChange={(v) => setFilter("verticalBand", v as VerticalBand)}>
-              {VERTICAL_BANDS.map((item) => (<option key={item.value} value={item.value}>{item.label}</option>))}
+            <FilterSelect
+              label="Vertical"
+              value={filters.verticalBand}
+              onChange={(v) => setFilter("verticalBand", v as VerticalBand)}
+            >
+              {VERTICAL_BANDS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
             </FilterSelect>
 
-            <FilterSelect label="Severity" value={filters.severity} onChange={(v) => setFilter("severity", v as SeverityFilter)}>
-              {SEVERITY_FILTERS.map((item) => (<option key={item.value} value={item.value}>{item.label}</option>))}
+            <FilterSelect
+              label="Severity"
+              value={filters.severity}
+              onChange={(v) => setFilter("severity", v as SeverityFilter)}
+            >
+              {SEVERITY_FILTERS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
             </FilterSelect>
           </div>
 
           <div className="grid grid-cols-2 gap-3 border-t border-[var(--sw-border)] pt-4">
-            <RangeInput label="Min alt" value={filters.minAltitudeFt} suffix="ft" onChange={(v) => setFilter("minAltitudeFt", v)} />
-            <RangeInput label="Max alt" value={filters.maxAltitudeFt} suffix="ft" onChange={(v) => setFilter("maxAltitudeFt", v)} />
-            <RangeInput label="Min spd" value={filters.minSpeedKt} suffix="kt" onChange={(v) => setFilter("minSpeedKt", v)} />
-            <RangeInput label="Max spd" value={filters.maxSpeedKt} suffix="kt" onChange={(v) => setFilter("maxSpeedKt", v)} />
+            <RangeInput
+              label="Min alt"
+              value={filters.minAltitudeFt}
+              suffix="ft"
+              onChange={(v) => setFilter("minAltitudeFt", v)}
+            />
+            <RangeInput
+              label="Max alt"
+              value={filters.maxAltitudeFt}
+              suffix="ft"
+              onChange={(v) => setFilter("maxAltitudeFt", v)}
+            />
+            <RangeInput
+              label="Min spd"
+              value={filters.minSpeedKt}
+              suffix="kt"
+              onChange={(v) => setFilter("minSpeedKt", v)}
+            />
+            <RangeInput
+              label="Max spd"
+              value={filters.maxSpeedKt}
+              suffix="kt"
+              onChange={(v) => setFilter("maxSpeedKt", v)}
+            />
           </div>
         </div>
       )}
@@ -819,12 +1027,17 @@ function FilterWorkbench({
         <div className="flex flex-wrap items-center gap-1.5 mt-1">
           <SlidersHorizontal className="w-3 h-3 text-[var(--sw-muted)] mr-1" />
           {activeFilterLabels.slice(0, 4).map((label) => (
-            <span key={label} className="px-1.5 py-0.5 bg-[var(--sw-surface-hover)] text-[var(--sw-text)] text-[10px] rounded border border-[var(--sw-border)]">
+            <span
+              key={label}
+              className="px-1.5 py-0.5 bg-[var(--sw-surface-hover)] text-[var(--sw-text)] text-[10px] rounded border border-[var(--sw-border)]"
+            >
               {label}
             </span>
           ))}
           {activeFilterLabels.length > 4 && (
-            <span className="text-[10px] text-[var(--sw-muted)] font-medium">+{activeFilterLabels.length - 4}</span>
+            <span className="text-[10px] text-[var(--sw-muted)] font-medium">
+              +{activeFilterLabels.length - 4}
+            </span>
           )}
         </div>
       )}
@@ -832,10 +1045,22 @@ function FilterWorkbench({
   );
 }
 
-function FilterSelect({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: ReactNode }) {
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: ReactNode;
+}) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--sw-muted)]">{label}</span>
+      <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--sw-muted)]">
+        {label}
+      </span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -847,10 +1072,22 @@ function FilterSelect({ label, value, onChange, children }: { label: string; val
   );
 }
 
-function RangeInput({ label, value, suffix, onChange }: { label: string; value: string; suffix: string; onChange: (value: string) => void }) {
+function RangeInput({
+  label,
+  value,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  suffix: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <label className="flex items-center bg-[var(--sw-surface-strong)] border border-[var(--sw-border)] rounded px-2 py-1.5 focus-within:border-blue-500/50">
-      <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--sw-muted)] w-12 shrink-0">{label}</span>
+      <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--sw-muted)] w-12 shrink-0">
+        {label}
+      </span>
       <input
         value={value}
         inputMode="numeric"
@@ -862,7 +1099,17 @@ function RangeInput({ label, value, suffix, onChange }: { label: string; value: 
   );
 }
 
-function FlightFeedList({ flights, selectedId, onSelect, virtualized = false }: { flights: Flight[]; selectedId: string | null; onSelect: (id: string) => void; virtualized?: boolean }) {
+function FlightFeedList({
+  flights,
+  selectedId,
+  onSelect,
+  virtualized = false,
+}: {
+  flights: Flight[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  virtualized?: boolean;
+}) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: flights.length,
@@ -873,13 +1120,20 @@ function FlightFeedList({ flights, selectedId, onSelect, virtualized = false }: 
 
   if (virtualized) {
     return (
-      <div ref={parentRef} className="flex-1 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
+      <div
+        ref={parentRef}
+        className="flex-1 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10"
+      >
         <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((item) => {
             const flight = flights[item.index];
             if (!flight) return null;
             return (
-              <div key={flight.icao24} className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${item.start}px)`, height: `${item.size}px` }}>
+              <div
+                key={flight.icao24}
+                className="absolute top-0 left-0 w-full"
+                style={{ transform: `translateY(${item.start}px)`, height: `${item.size}px` }}
+              >
                 <FlightFeedCard flight={flight} selectedId={selectedId} onSelect={onSelect} />
               </div>
             );
@@ -900,7 +1154,15 @@ function FlightFeedList({ flights, selectedId, onSelect, virtualized = false }: 
   );
 }
 
-function FlightFeedCard({ flight, selectedId, onSelect }: { flight: Flight; selectedId: string | null; onSelect: (id: string) => void }) {
+function FlightFeedCard({
+  flight,
+  selectedId,
+  onSelect,
+}: {
+  flight: Flight;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
   const isSelected = selectedId === flight.icao24;
   const airline = airlineFromCallsign(flight.callsign);
   const alt = altitudeFt(flight.baro_altitude ?? flight.geo_altitude);
@@ -910,8 +1172,9 @@ function FlightFeedCard({ flight, selectedId, onSelect }: { flight: Flight; sele
     <button
       type="button"
       onClick={() => onSelect(flight.icao24)}
-      className={`w-full text-left px-4 py-3 hover:bg-[var(--sw-surface-hover)] focus:bg-[var(--sw-surface-hover)] outline-none transition-colors border-l-2 ${isSelected ? "border-blue-500 bg-[var(--sw-surface-hover)]" : "border-transparent"
-        }`}
+      className={`w-full text-left px-4 py-3 hover:bg-[var(--sw-surface-hover)] focus:bg-[var(--sw-surface-hover)] outline-none transition-colors border-l-2 ${
+        isSelected ? "border-blue-500 bg-[var(--sw-surface-hover)]" : "border-transparent"
+      }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
         <span className="text-sm font-bold font-mono text-[var(--sw-text)] tracking-tight">
@@ -922,8 +1185,12 @@ function FlightFeedCard({ flight, selectedId, onSelect }: { flight: Flight; sele
         </span>
       </div>
       <div className="flex justify-between items-center text-xs text-[var(--sw-muted)] mb-1.5">
-        <span className="truncate pr-2 text-[var(--sw-text)]">{airline || flight.origin_country}</span>
-        <span className={`text-[9px] font-bold uppercase tracking-wider ${flight.on_ground ? "text-amber-500" : "text-blue-400"}`}>
+        <span className="truncate pr-2 text-[var(--sw-text)]">
+          {airline || flight.origin_country}
+        </span>
+        <span
+          className={`text-[9px] font-bold uppercase tracking-wider ${flight.on_ground ? "text-amber-500" : "text-blue-400"}`}
+        >
           {flight.on_ground ? "GND" : "AIR"}
         </span>
       </div>

@@ -53,7 +53,10 @@ export async function fetchBackendJson<T = unknown>(
   throw lastError ?? new Error("Backend API unavailable");
 }
 
-export async function fetchBackendResponse(path: string, init: RequestInit = {}): Promise<Response> {
+export async function fetchBackendResponse(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
   let lastError: Error | null = null;
 
   for (const url of backendApiCandidates(path)) {

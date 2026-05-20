@@ -116,8 +116,9 @@ function TopBar({
 
   const aircraftDetail =
     activeFilterCount > 0
-      ? `${filteredFlightCount.toLocaleString()} matched / ${activeFilterCount} filter${activeFilterCount === 1 ? "" : "s"
-      }`
+      ? `${filteredFlightCount.toLocaleString()} matched / ${activeFilterCount} filter${
+          activeFilterCount === 1 ? "" : "s"
+        }`
       : `${inAir.toLocaleString()} airborne`;
 
   const airportDetail =
@@ -125,8 +126,9 @@ function TopBar({
       ? "Loading index..."
       : airportStatus === "error"
         ? "Fallback index"
-        : `${airportCountryCount.toLocaleString()} countries${airportIsFallback ? " (fallback)" : ""
-        }`;
+        : `${airportCountryCount.toLocaleString()} countries${
+            airportIsFallback ? " (fallback)" : ""
+          }`;
 
   const satelliteDetail =
     satelliteStatus === "loading" || satelliteStatus === "idle"
@@ -140,11 +142,11 @@ function TopBar({
   const sourceBreakdown =
     Object.keys(safeSourceCounts).length > 0
       ? Object.entries(safeSourceCounts)
-        .filter(([, count]) => count > 0)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 4)
-        .map(([src, count]) => `${src.replace(/_/g, "\u00a0")}\u00a0${count.toLocaleString()}`)
-        .join(" / ")
+          .filter(([, count]) => count > 0)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 4)
+          .map(([src, count]) => `${src.replace(/_/g, "\u00a0")}\u00a0${count.toLocaleString()}`)
+          .join(" / ")
       : feedSource
         ? feedSource.replace(/_/g, " ")
         : "live feed";
@@ -172,11 +174,17 @@ function TopBar({
       {/* ── Brand Identity ── */}
       <div className="flex items-center gap-2.5 min-w-0 pr-4 border-r border-white/20 dark:border-white/10 relative z-10 flex-shrink-0">
         <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/30 dark:bg-white/5 border border-white/40 dark:border-white/10 text-emerald-400 flex-shrink-0 shadow-[inset_0_1px_2px_rgba(255,255,255,0.2)] hover:scale-105 transition-all duration-300">
-          <img src="/logo.svg" className="w-7 h-7 object-contain filter drop-shadow-[0_0_4px_rgba(74,222,128,0.6)] dark:drop-shadow-[0_0_8px_rgba(74,222,128,0.8)]" alt="SkyWatch Logo" />
+          <img
+            src="/logo.svg"
+            className="w-7 h-7 object-contain filter drop-shadow-[0_0_4px_rgba(74,222,128,0.6)] dark:drop-shadow-[0_0_8px_rgba(74,222,128,0.8)]"
+            alt="SkyWatch Logo"
+          />
         </div>
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-1.5">
-            <h1 className="text-sm font-black tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-zinc-900 to-zinc-700 dark:from-zinc-50 dark:to-zinc-300">SkyWatch</h1>
+            <h1 className="text-sm font-black tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-zinc-900 to-zinc-700 dark:from-zinc-50 dark:to-zinc-300">
+              SkyWatch
+            </h1>
             <StatusBadge tone={statusTone} label={statusLabel} isLive={statusTone === "good"} />
           </div>
           <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest truncate">
@@ -269,10 +277,11 @@ function TopBar({
             onClick={() => setIsLegendOpen(!isLegendOpen)}
             aria-label="Map Legend"
             title="Map Legend"
-            className={`flex items-center justify-center w-8 h-8 rounded-full border text-zinc-500 dark:text-zinc-400 hover:bg-white/30 dark:hover:bg-white/10 transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 ${isLegendOpen
+            className={`flex items-center justify-center w-8 h-8 rounded-full border text-zinc-500 dark:text-zinc-400 hover:bg-white/30 dark:hover:bg-white/10 transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 ${
+              isLegendOpen
                 ? "bg-emerald-500/10 border-emerald-500/30 dark:bg-emerald-500/20 dark:border-emerald-500/30 text-emerald-600 dark:text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]"
                 : "bg-transparent border-transparent"
-              }`}
+            }`}
           >
             <Info className="w-4 h-4" />
           </button>
@@ -280,7 +289,9 @@ function TopBar({
           {isLegendOpen && (
             <div className="absolute right-0 top-10 mt-2 z-[2500] w-80 bg-white/90 dark:bg-zinc-950/90 border border-white/20 dark:border-white/10 backdrop-blur-3xl rounded-2xl p-4 shadow-2xl shadow-black/30 dark:shadow-black/80 ring-1 ring-white/5 font-sans text-zinc-700 dark:text-zinc-200 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
               <div className="flex items-center justify-between border-b border-zinc-100 dark:border-white/5 pb-2 mb-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-500 dark:text-emerald-400">Map Legend</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
+                  Map Legend
+                </span>
               </div>
 
               {/* Tabs */}
@@ -288,30 +299,33 @@ function TopBar({
                 <button
                   type="button"
                   onClick={() => setLegendTab("flights")}
-                  className={`flex-1 pb-1.5 text-center text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 ${legendTab === "flights"
+                  className={`flex-1 pb-1.5 text-center text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 ${
+                    legendTab === "flights"
                       ? "text-emerald-500 dark:text-emerald-400 border-emerald-500"
                       : "text-zinc-500 border-transparent hover:text-zinc-800 dark:hover:text-zinc-300"
-                    }`}
+                  }`}
                 >
                   Flights
                 </button>
                 <button
                   type="button"
                   onClick={() => setLegendTab("airspace")}
-                  className={`flex-1 pb-1.5 text-center text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 ${legendTab === "airspace"
+                  className={`flex-1 pb-1.5 text-center text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 ${
+                    legendTab === "airspace"
                       ? "text-emerald-500 dark:text-emerald-400 border-emerald-500"
                       : "text-zinc-500 border-transparent hover:text-zinc-800 dark:hover:text-zinc-300"
-                    }`}
+                  }`}
                 >
                   Airports
                 </button>
                 <button
                   type="button"
                   onClick={() => setLegendTab("env")}
-                  className={`flex-1 pb-1.5 text-center text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 ${legendTab === "env"
+                  className={`flex-1 pb-1.5 text-center text-[10px] font-bold uppercase tracking-wider transition-all border-b-2 ${
+                    legendTab === "env"
                       ? "text-emerald-500 dark:text-emerald-400 border-emerald-500"
                       : "text-zinc-500 border-transparent hover:text-zinc-800 dark:hover:text-zinc-300"
-                    }`}
+                  }`}
                 >
                   Env & Space
                 </button>
@@ -320,14 +334,27 @@ function TopBar({
               <div className="flex flex-col gap-2 max-h-[320px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
                 {legendTab === "flights" && (
                   <>
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Aircraft Classes</div>
+                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                      Aircraft Classes
+                    </div>
                     {legendClasses.map((cls) => {
                       const count = classCounts.get(cls.key) ?? 0;
                       return (
-                        <div key={cls.key} className="flex items-center gap-3 text-xs" title={cls.description}>
+                        <div
+                          key={cls.key}
+                          className="flex items-center gap-3 text-xs"
+                          title={cls.description}
+                        >
                           <Swatch color={cls.color} />
-                          <span className={count > 0 ? "text-zinc-200 font-medium" : "text-zinc-600"}>{cls.shortLabel}</span>
-                          <span className="ml-auto font-mono text-[10px] font-semibold" style={{ color: count > 0 ? cls.color : "#4b5563" }}>
+                          <span
+                            className={count > 0 ? "text-zinc-200 font-medium" : "text-zinc-600"}
+                          >
+                            {cls.shortLabel}
+                          </span>
+                          <span
+                            className="ml-auto font-mono text-[10px] font-semibold"
+                            style={{ color: count > 0 ? cls.color : "#4b5563" }}
+                          >
                             {count > 0 ? count.toLocaleString() : "—"}
                           </span>
                         </div>
@@ -336,7 +363,9 @@ function TopBar({
 
                     <div className="h-px bg-white/5 my-2" />
 
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Telemetry Status</div>
+                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                      Telemetry Status
+                    </div>
                     {TELEMETRY_LEGEND.map((item) => (
                       <div key={item.label} className="flex items-center gap-3 text-xs">
                         <Swatch color={item.color} shape={item.shape} />
@@ -348,7 +377,9 @@ function TopBar({
 
                 {legendTab === "airspace" && (
                   <>
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Airports</div>
+                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                      Airports
+                    </div>
                     {AIRPORT_LEGEND.map((item) => (
                       <div key={item.label} className="flex items-center gap-3 text-xs">
                         <Swatch color={item.color} shape={item.shape} />
@@ -358,7 +389,9 @@ function TopBar({
 
                     <div className="h-px bg-white/5 my-2" />
 
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Airspace Restrictions (TFR)</div>
+                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                      Airspace Restrictions (TFR)
+                    </div>
                     {TFR_LEGEND.map((item) => (
                       <div key={item.label} className="flex items-center gap-3 text-xs">
                         <Swatch color={item.color} shape={item.shape} />
@@ -370,7 +403,9 @@ function TopBar({
 
                 {legendTab === "env" && (
                   <>
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Weather Categories (METAR)</div>
+                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                      Weather Categories (METAR)
+                    </div>
                     {WEATHER_LEGEND.map((item) => (
                       <div key={item.label} className="flex items-center gap-3 text-xs">
                         <Swatch color={item.color} shape={item.shape} />
@@ -380,7 +415,9 @@ function TopBar({
 
                     <div className="h-px bg-white/5 my-2" />
 
-                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Satellites</div>
+                    <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                      Satellites
+                    </div>
                     {SATELLITE_LEGEND.map((item) => (
                       <div key={item.label} className="flex items-center gap-3 text-xs">
                         <Swatch color={item.color} shape={item.shape} />
@@ -417,11 +454,14 @@ function StatusBadge({ tone, label, isLive }: { tone: string; label: string; isL
     good: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]",
     warn: "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.2)]",
     bad: "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.2)]",
-    neutral: "bg-zinc-500/10 border-zinc-500/30 text-zinc-600 dark:text-zinc-400 shadow-[0_0_12px_rgba(113,113,122,0.2)]",
+    neutral:
+      "bg-zinc-500/10 border-zinc-500/30 text-zinc-600 dark:text-zinc-400 shadow-[0_0_12px_rgba(113,113,122,0.2)]",
   };
 
   return (
-    <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[8px] font-bold uppercase tracking-wider backdrop-blur-md transition-all duration-300 ${styles[tone]}`}>
+    <div
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[8px] font-bold uppercase tracking-wider backdrop-blur-md transition-all duration-300 ${styles[tone]}`}
+    >
       {isLive && (
         <span className="relative flex w-1 h-1">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -448,8 +488,18 @@ function SummaryItem({
   tone?: "neutral" | "bad" | "warn";
   mono?: boolean;
 }) {
-  const labelColor = tone === "bad" ? "text-rose-500" : tone === "warn" ? "text-amber-500" : "text-zinc-500 dark:text-zinc-400";
-  const valueColor = tone === "bad" ? "text-rose-600 dark:text-rose-400" : tone === "warn" ? "text-amber-600 dark:text-amber-400" : "text-zinc-900 dark:text-zinc-100";
+  const labelColor =
+    tone === "bad"
+      ? "text-rose-500"
+      : tone === "warn"
+        ? "text-amber-500"
+        : "text-zinc-500 dark:text-zinc-400";
+  const valueColor =
+    tone === "bad"
+      ? "text-rose-600 dark:text-rose-400"
+      : tone === "warn"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-zinc-900 dark:text-zinc-100";
 
   return (
     <div className="flex flex-col min-w-0 shrink px-2 py-0.5 rounded-lg border border-transparent hover:border-white/20 dark:hover:border-white/10 hover:bg-white/10 dark:hover:bg-white/[0.03] transition-all duration-300 cursor-default">
@@ -463,7 +513,9 @@ function SummaryItem({
         </span>
       </div>
       <div className="flex items-baseline gap-1.5">
-        <span className={`text-xs font-bold leading-none ${valueColor} ${mono ? "font-mono tracking-tight" : ""}`}>
+        <span
+          className={`text-xs font-bold leading-none ${valueColor} ${mono ? "font-mono tracking-tight" : ""}`}
+        >
           {value}
         </span>
         {detail && (
