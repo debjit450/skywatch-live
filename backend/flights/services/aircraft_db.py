@@ -117,7 +117,7 @@ def _lookup_adsbdb(icao24):
     return None
 
 
-def lookup_aircraft(icao24):
+def _lookup_aircraft_uncached(icao24):
     """
     Lookup aircraft metadata by ICAO24 hex code.
     Returns dict with registration, manufacturer, aircraft_type, owner.
@@ -141,3 +141,10 @@ def lookup_aircraft(icao24):
         return api_result
         
     return None
+
+
+def lookup_aircraft(icao24):
+    """Lookup aircraft metadata with the shared Redis metadata cache."""
+    from .cache import get_aircraft_metadata
+
+    return get_aircraft_metadata(icao24, _lookup_aircraft_uncached)

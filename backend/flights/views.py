@@ -10,15 +10,21 @@ import logging
 import math
 import re
 from datetime import datetime, timedelta, timezone as datetime_timezone
+from django.contrib.auth import get_user_model
+from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 from django.db import connection
 from django.db.models import Count, Avg, OuterRef, Subquery
+from django.db.models.functions import TruncDay, TruncHour
+from django.utils.dateparse import parse_datetime
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .models import Aircraft, FlightState, FlightRoute, AnomalyEvent, SystemMetrics
+from .models import Aircraft, FlightState, FlightRoute, FlightPosition, AnomalyEvent, SystemMetrics, AlertRule
 from .serializers import (
     FlightStateLiveSerializer,
     FlightRouteSerializer,
@@ -26,6 +32,8 @@ from .serializers import (
     AnomalyEventCompactSerializer,
     AircraftSerializer,
     SystemMetricsSerializer,
+    FlightPositionSerializer,
+    AlertRuleSerializer,
 )
 from .services.cache import get_current_flights
 from .services.anomaly_detector import detect_all
@@ -36,6 +44,7 @@ EARTH_RADIUS_KM = 6371.0
 ROUTE_GAP_MINUTES = 45
 MAX_REASONABLE_SEGMENT_KM = 950
 ICAO24_RE = re.compile(r"^[0-9a-f]{6}$")
+MAX_LIVE_POSITION_AGE_SECONDS = 180
 
 
 def _normalize_icao24(value):
@@ -43,6 +52,71 @@ def _normalize_icao24(value):
         return None
     normalized = value.strip().lower()
     return normalized if ICAO24_RE.fullmatch(normalized) else None
+
+
+def _state_age_seconds(state, now_seconds=None):
+    now_seconds = now_seconds or time.time()
+    timestamp = state.get("time_position") or state.get("last_contact")
+    if not isinstance(timestamp, (int, float)):
+        return None
+    return max(0, now_seconds - timestamp)
+
+
+def _fresh_states(states, max_age_seconds=MAX_LIVE_POSITION_AGE_SECONDS):
+    now_seconds = time.time()
+    fresh = []
+    stale_count = 0
+    max_age = 0
+    for state in states:
+        age = _state_age_seconds(state, now_seconds)
+        if age is None or age > max_age_seconds:
+            stale_count += 1
+            continue
+        max_age = max(max_age, age)
+        fresh.append(state)
+    return fresh, stale_count, max_age
+
+
+def _freshness_response(payload, status_code=status.HTTP_200_OK):
+    response = Response(payload, status=status_code)
+    response["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
+def _analytics_db_alias():
+    return getattr(settings, "ANALYTICS_DB_ALIAS", "default")
+
+
+def _cached_payload(key, ttl_seconds, builder):
+    payload = cache.get(key)
+    if payload is not None:
+        return payload
+    payload = builder()
+    cache.set(key, payload, ttl_seconds)
+    return payload
+
+
+def _alert_rule_owner(request):
+    if request.user and request.user.is_authenticated:
+        return request.user
+
+    username = getattr(settings, "ANONYMOUS_ALERT_RULE_USERNAME", "skywatch-local-operator")
+    User = get_user_model()
+    lookup = {User.USERNAME_FIELD: username}
+    defaults = {}
+    if hasattr(User, "email"):
+        defaults["email"] = "skywatch-local@example.invalid"
+    user, _ = User.objects.get_or_create(defaults=defaults, **lookup)
+    return user
+
+
+def _parse_iso_datetime(value):
+    parsed = parse_datetime(value or "")
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, datetime_timezone.utc)
+    return parsed
 
 
 def _int_query_param(request, name, default, minimum, maximum):
@@ -457,18 +531,79 @@ class FlightListView(APIView):
             states = cached.get("states", [])
             if not isinstance(states, list):
                 states = []
-            # Attach ML scores if available
-            return Response({
+            states, stale_count, max_age = _fresh_states(states)
+            source_counts = cached.get("source_counts", {})
+            # Build source_counts from live states if not stored separately
+            if not source_counts and states:
+                for state in states:
+                    src = state.get("data_source") or "unknown"
+                    source_counts[src] = source_counts.get(src, 0) + 1
+            return _freshness_response({
                 "time": cached.get("time", int(time.time())),
                 "flights": states,
                 "authenticated": cached.get("authenticated", False),
                 "source": "cache",
                 "count": len(states),
+                "stale_count": stale_count,
+                "max_age_seconds": round(max_age, 1),
+                "source_counts": source_counts,
             })
+
+        try:
+            from .services.opensky import fetch_all_states
+            from .services.cache import set_current_flights
+
+            live = fetch_all_states()
+            if live and live.get("states"):
+                set_current_flights(live)
+                live_states, stale_count, max_age = _fresh_states(live.get("states", []))
+                source_counts = {}
+                for state in live_states:
+                    src = state.get("data_source") or "unknown"
+                    source_counts[src] = source_counts.get(src, 0) + 1
+                return _freshness_response({
+                    "time": live.get("time", int(time.time())),
+                    "flights": live_states,
+                    "authenticated": live.get("authenticated", False),
+                    "source": "opensky",
+                    "count": len(live_states),
+                    "stale_count": stale_count,
+                    "max_age_seconds": round(max_age, 1),
+                    "source_counts": source_counts,
+                })
+        except Exception as exc:
+            logger.warning("Live OpenSky fetch failed before database fallback: %s", exc)
 
         # Fallback: fetch from DB (last 2 minutes of states)
         cutoff = timezone.now() - timedelta(minutes=2)
-        base = FlightState.objects.filter(timestamp__gte=cutoff).select_related("aircraft")
+        base = (
+            FlightState.objects.filter(timestamp__gte=cutoff)
+            .select_related("aircraft")
+            .only(
+                "aircraft_id",
+                "timestamp",
+                "time_position",
+                "last_contact",
+                "longitude",
+                "latitude",
+                "baro_altitude",
+                "geo_altitude",
+                "on_ground",
+                "velocity",
+                "true_track",
+                "vertical_rate",
+                "squawk",
+                "spi",
+                "position_source",
+                "category",
+                "ml_anomaly_score",
+                "data_source",
+                "predicted_path",
+                "prediction_confidence",
+                "aircraft__callsign",
+                "aircraft__origin_country",
+            )
+        )
 
         if connection.vendor == "postgresql":
             flights = list(
@@ -507,6 +642,8 @@ class FlightListView(APIView):
                 "position_source": fs.position_source,
                 "category": fs.category,
                 "ml_anomaly_score": fs.ml_anomaly_score,
+                "predicted_path": fs.predicted_path,
+                "prediction_confidence": fs.prediction_confidence,
                 "data_source": fs.data_source or (
                     "opensky" if fs.position_source in (0, 1)
                     else "mlat" if fs.position_source == 2
@@ -518,31 +655,19 @@ class FlightListView(APIView):
                 ),
             })
 
-        if not states:
-            try:
-                from .services.opensky import fetch_all_states
-                from .services.cache import set_current_flights
+        states, stale_count, max_age = _fresh_states(states)
+        response_time = int(time.time())
+        if states:
+            response_time = int(max((state.get("time_position") or state.get("last_contact") or 0) for state in states))
 
-                live = fetch_all_states()
-                if live and live.get("states"):
-                    set_current_flights(live)
-                    live_states = live.get("states", [])
-                    return Response({
-                        "time": live.get("time", int(time.time())),
-                        "flights": live_states,
-                        "authenticated": live.get("authenticated", False),
-                        "source": "opensky",
-                        "count": len(live_states),
-                    })
-            except Exception as exc:
-                logger.warning("Live OpenSky fallback failed: %s", exc)
-
-        return Response({
-            "time": int(time.time()),
+        return _freshness_response({
+            "time": response_time,
             "flights": states,
-            "authenticated": True,
+            "authenticated": False,
             "source": "database",
             "count": len(states),
+            "stale_count": stale_count,
+            "max_age_seconds": round(max_age, 1),
         })
 
 
@@ -634,85 +759,100 @@ class FlightRouteView(APIView):
         hours = _int_query_param(request, "hours", 12, 1, 72)
         cutoff = timezone.now() - timedelta(hours=hours)
 
-        routes = FlightRoute.objects.filter(
-            aircraft_id=icao24,
-            started_at__gte=cutoff,
-        ).order_by("-started_at")
+        try:
+            routes = FlightRoute.objects.filter(
+                aircraft_id=icao24,
+                started_at__gte=cutoff,
+            ).order_by("-started_at")
 
-        serialized_routes = []
-        if routes.exists():
-            for route in routes:
-                points = [
-                    point
-                    for point in (
-                        _normalize_route_point(raw_point)
-                        for raw_point in (route.points or [])
+            serialized_routes = []
+            if routes.exists():
+                for route in routes:
+                    try:
+                        points = [
+                            point
+                            for point in (
+                                _normalize_route_point(raw_point)
+                                for raw_point in (route.points or [])
+                            )
+                            if point is not None
+                        ]
+                        serialized_routes.append(
+                            _serialize_route(
+                                route.session_id,
+                                points,
+                                "route_table",
+                                started_at=route.started_at.isoformat(),
+                                ended_at=route.ended_at.isoformat(),
+                                total_distance_km=route.total_distance_km,
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to serialize route %s: %s", route.session_id, exc)
+                        continue
+            else:
+                # Build route from FlightState records on the fly. Include on-ground
+                # points so clients can infer stopovers and taxi/arrival phases.
+                states = (
+                    FlightState.objects.filter(
+                        aircraft_id=icao24,
+                        timestamp__gte=cutoff,
+                        latitude__isnull=False,
+                        longitude__isnull=False,
                     )
-                    if point is not None
-                ]
-                serialized_routes.append(
-                    _serialize_route(
-                        route.session_id,
-                        points,
-                        "route_table",
-                        started_at=route.started_at.isoformat(),
-                        ended_at=route.ended_at.isoformat(),
-                        total_distance_km=route.total_distance_km,
+                    .order_by("timestamp")
+                    .values(
+                        "latitude",
+                        "longitude",
+                        "baro_altitude",
+                        "velocity",
+                        "true_track",
+                        "timestamp",
+                        "on_ground",
+                        "data_source",
                     )
                 )
-        else:
-            # Build route from FlightState records on the fly. Include on-ground
-            # points so clients can infer stopovers and taxi/arrival phases.
-            states = (
-                FlightState.objects.filter(
-                    aircraft_id=icao24,
-                    timestamp__gte=cutoff,
-                    latitude__isnull=False,
-                    longitude__isnull=False,
-                )
-                .order_by("timestamp")
-                .values(
-                    "latitude",
-                    "longitude",
-                    "baro_altitude",
-                    "velocity",
-                    "true_track",
-                    "timestamp",
-                    "on_ground",
-                    "data_source",
-                )
+
+                points = [_point_from_state(state) for state in states]
+                points = [point for point in points if _valid_point(point)]
+
+                sessions = _split_points_into_sessions(points, ROUTE_GAP_MINUTES)
+                for index, session in enumerate(sessions):
+                    try:
+                        session_id = (
+                            f"states-{_to_epoch_ms(session[0].get('time'))}-{index}"
+                            if session
+                            else f"states-{index}"
+                        )
+                        serialized_routes.append(_serialize_route(session_id, session, "states"))
+                    except Exception as exc:
+                        logger.warning("Failed to serialize session %s: %s", index, exc)
+                        continue
+
+            serialized_routes.sort(
+                key=lambda route: _to_epoch_ms(route.get("started_at")),
+                reverse=True,
             )
+            total_distance = sum(route.get("total_distance_km") or 0 for route in serialized_routes)
+            point_count = sum(route.get("point_count") or 0 for route in serialized_routes)
+            layovers = _detect_layovers(list(reversed(serialized_routes)))
+            intelligence = _build_track_intelligence(list(reversed(serialized_routes)))
 
-            points = [_point_from_state(state) for state in states]
-            points = [point for point in points if _valid_point(point)]
-
-            sessions = _split_points_into_sessions(points, ROUTE_GAP_MINUTES)
-            for index, session in enumerate(sessions):
-                session_id = (
-                    f"states-{_to_epoch_ms(session[0].get('time'))}-{index}"
-                    if session
-                    else f"states-{index}"
-                )
-                serialized_routes.append(_serialize_route(session_id, session, "states"))
-
-        serialized_routes.sort(
-            key=lambda route: _to_epoch_ms(route.get("started_at")),
-            reverse=True,
-        )
-        total_distance = sum(route.get("total_distance_km") or 0 for route in serialized_routes)
-        point_count = sum(route.get("point_count") or 0 for route in serialized_routes)
-        layovers = _detect_layovers(list(reversed(serialized_routes)))
-        intelligence = _build_track_intelligence(list(reversed(serialized_routes)))
-
-        return Response({
-            "icao24": icao24,
-            "routes": serialized_routes,
-            "point_count": point_count,
-            "total_distance_km": total_distance if total_distance > 0 else None,
-            "layovers": layovers,
-            "intelligence": intelligence,
-            "lookback_hours": hours,
-        })
+            return Response({
+                "icao24": icao24,
+                "routes": serialized_routes,
+                "point_count": point_count,
+                "total_distance_km": total_distance if total_distance > 0 else None,
+                "layovers": layovers,
+                "intelligence": intelligence,
+                "lookback_hours": hours,
+            })
+        except Exception as exc:
+            logger.error("Flight route API error for %s: %s", icao24, exc, exc_info=True)
+            return Response(
+                {"error": "Failed to retrieve flight route", "detail": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class AnomalyListView(APIView):
@@ -877,6 +1017,114 @@ class AnalyticsTimelineView(APIView):
         return Response({"timeline": list(metrics)})
 
 
+class TrafficAnalyticsView(APIView):
+    """GET /api/v1/analytics/traffic?range=7d."""
+
+    def get(self, request):
+        range_value = request.query_params.get("range", "7d")
+        days = 7 if range_value != "24h" else 1
+        cutoff = timezone.now() - timedelta(days=days)
+        alias = _analytics_db_alias()
+
+        def build():
+            rows = (
+                FlightState.objects.using(alias)
+                .filter(timestamp__gte=cutoff)
+                .annotate(hour=TruncHour("timestamp"))
+                .values("hour")
+                .annotate(active_flights=Count("aircraft_id", distinct=True))
+                .order_by("hour")
+            )
+            return {"range": range_value, "points": list(rows)}
+
+        return Response(_cached_payload(f"analytics:traffic:{range_value}", 600, build))
+
+
+class RouteAnalyticsView(APIView):
+    """GET /api/v1/analytics/routes?limit=10."""
+
+    def get(self, request):
+        limit = _int_query_param(request, "limit", 10, 1, 50)
+        alias = _analytics_db_alias()
+
+        def build():
+            rows = (
+                FlightState.objects.using(alias)
+                .exclude(origin_airport="")
+                .exclude(destination_airport="")
+                .values("origin_airport", "destination_airport")
+                .annotate(flight_count=Count("aircraft_id", distinct=True))
+                .order_by("-flight_count")[:limit]
+            )
+            return {"routes": list(rows), "limit": limit}
+
+        return Response(_cached_payload(f"analytics:routes:{limit}", 600, build))
+
+
+class AnomalyRateAnalyticsView(APIView):
+    """GET /api/v1/analytics/anomaly-rate?range=30d."""
+
+    def get(self, request):
+        range_value = request.query_params.get("range", "30d")
+        days = 30
+        cutoff = timezone.now() - timedelta(days=days)
+        alias = _analytics_db_alias()
+
+        def build():
+            flight_rows = (
+                FlightState.objects.using(alias)
+                .filter(timestamp__gte=cutoff)
+                .annotate(day=TruncDay("timestamp"))
+                .values("day")
+                .annotate(flights=Count("aircraft_id", distinct=True))
+            )
+            anomaly_rows = (
+                AnomalyEvent.objects.using(alias)
+                .filter(detected_at__gte=cutoff)
+                .annotate(day=TruncDay("detected_at"))
+                .values("day")
+                .annotate(anomalies=Count("id"))
+            )
+            by_day = {row["day"].date().isoformat(): {"day": row["day"].date().isoformat(), "flights": row["flights"], "anomalies": 0} for row in flight_rows if row["day"]}
+            for row in anomaly_rows:
+                if not row["day"]:
+                    continue
+                key = row["day"].date().isoformat()
+                by_day.setdefault(key, {"day": key, "flights": 0, "anomalies": 0})
+                by_day[key]["anomalies"] = row["anomalies"]
+            points = []
+            for item in sorted(by_day.values(), key=lambda value: value["day"]):
+                flights = max(item["flights"], 1)
+                item["anomalies_per_100_flights"] = (item["anomalies"] / flights) * 100
+                points.append(item)
+            return {"range": range_value, "points": points}
+
+        return Response(_cached_payload(f"analytics:anomaly-rate:{range_value}", 600, build))
+
+
+class AircraftTypeAnalyticsView(APIView):
+    """GET /api/v1/analytics/aircraft-types."""
+
+    def get(self, request):
+        alias = _analytics_db_alias()
+
+        def build():
+            rows = (
+                Aircraft.objects.using(alias)
+                .values("aircraft_type")
+                .annotate(count=Count("icao24"))
+                .order_by("-count")[:25]
+            )
+            return {
+                "types": [
+                    {"aircraft_type": row["aircraft_type"] or "Unknown", "count": row["count"]}
+                    for row in rows
+                ]
+            }
+
+        return Response(_cached_payload("analytics:aircraft-types", 600, build))
+
+
 class PredictionView(APIView):
     """
     GET /api/v1/predictions/<icao24>/
@@ -959,6 +1207,179 @@ class PredictionView(APIView):
         })
 
 
+class MetarWeatherView(APIView):
+    """GET /api/v1/weather/metar?airports=KJFK,EGLL."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        raw_airports = request.query_params.get("airports", "")
+        airports = [
+            item.strip().upper()
+            for item in raw_airports.split(",")
+            if 3 <= len(item.strip()) <= 5 and item.strip().isalnum()
+        ][:80]
+        if not airports:
+            return Response({"weather": {}, "count": 0})
+        from .services.weather import fetch_metars
+
+        weather = fetch_metars(airports)
+        return Response({"weather": weather, "count": len(weather)})
+
+
+class TfrAirspaceView(APIView):
+    """GET /api/v1/airspace/tfr."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .services.airspace_restrictions import get_airspace_restrictions
+
+        return Response(get_airspace_restrictions())
+
+
+class AirspaceRestrictionsView(APIView):
+    """GET /api/v1/airspace/restrictions/."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .services.airspace_restrictions import get_airspace_restrictions
+
+        return Response(get_airspace_restrictions())
+
+
+class PlaybackView(APIView):
+    """GET /api/v1/playback?flight_id=X&start=ISO8601&end=ISO8601."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        flight_id = _normalize_icao24(request.query_params.get("flight_id"))
+        start = _parse_iso_datetime(request.query_params.get("start"))
+        end = _parse_iso_datetime(request.query_params.get("end"))
+        if not flight_id or not start or not end:
+            return Response(
+                {"error": "flight_id, start, and end are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        now = timezone.now()
+        if end <= start:
+            return Response({"error": "end must be after start"}, status=status.HTTP_400_BAD_REQUEST)
+        if end - start > timedelta(hours=24) or start < now - timedelta(hours=24):
+            return Response({"error": "playback is limited to the last 24 hours"}, status=status.HTTP_400_BAD_REQUEST)
+
+        positions = FlightPosition.objects.filter(
+            aircraft_id=flight_id,
+            timestamp__gte=start,
+            timestamp__lte=end,
+        ).order_by("timestamp")[:5000]
+
+        if not positions.exists():
+            fallback = (
+                FlightState.objects.filter(
+                    aircraft_id=flight_id,
+                    timestamp__gte=start,
+                    timestamp__lte=end,
+                    latitude__isnull=False,
+                    longitude__isnull=False,
+                )
+                .order_by("timestamp")
+                .values(
+                    "timestamp",
+                    "latitude",
+                    "longitude",
+                    "baro_altitude",
+                    "velocity",
+                    "true_track",
+                    "vertical_rate",
+                    "on_ground",
+                    "data_source",
+                )[:5000]
+            )
+            return Response({
+                "flight_id": flight_id,
+                "positions": [
+                    {
+                        "timestamp": item["timestamp"],
+                        "latitude": item["latitude"],
+                        "longitude": item["longitude"],
+                        "altitude": item["baro_altitude"],
+                        "velocity": item["velocity"],
+                        "heading": item["true_track"],
+                        "vertical_rate": item["vertical_rate"],
+                        "on_ground": item["on_ground"],
+                        "data_source": item["data_source"],
+                    }
+                    for item in fallback
+                ],
+            })
+
+        return Response({
+            "flight_id": flight_id,
+            "positions": FlightPositionSerializer(positions, many=True).data,
+        })
+
+
+class AnomalyExplanationView(APIView):
+    def get(self, request, pk):
+        try:
+            event = AnomalyEvent.objects.select_related("aircraft", "alert_rule").get(pk=pk)
+        except AnomalyEvent.DoesNotExist:
+            return Response({"error": "Anomaly not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"id": event.id, "explanation": event.explanation or []})
+
+
+class AnomalyFeedbackView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        verdict = request.data.get("verdict")
+        if verdict not in {"true_positive", "false_positive"}:
+            return Response({"error": "Invalid verdict"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            event = AnomalyEvent.objects.get(pk=pk)
+        except AnomalyEvent.DoesNotExist:
+            return Response({"error": "Anomaly not found"}, status=status.HTTP_404_NOT_FOUND)
+        event.feedback = verdict
+        event.save(update_fields=["feedback"])
+        return Response({"id": event.id, "feedback": event.feedback})
+
+
+class AlertRuleListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        rules = AlertRule.objects.filter(user=_alert_rule_owner(request)).order_by("name")
+        return Response({"rules": AlertRuleSerializer(rules, many=True).data})
+
+    def post(self, request):
+        serializer = AlertRuleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=_alert_rule_owner(request))
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class AlertRuleDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def patch(self, request, pk):
+        try:
+            rule = AlertRule.objects.get(pk=pk, user=_alert_rule_owner(request))
+        except AlertRule.DoesNotExist:
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = AlertRuleSerializer(rule, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, pk):
+        deleted, _ = AlertRule.objects.filter(pk=pk, user=_alert_rule_owner(request)).delete()
+        if not deleted:
+            return Response({"error": "Rule not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class DataSourceStatsView(APIView):
     """
     GET /api/v1/sources/
@@ -995,6 +1416,12 @@ class DataSourceStatsView(APIView):
                 "type": "ADS-B Ground",
                 "description": "ADS-B Exchange community feed",
                 "color": "#a78bfa",
+            },
+            "adsb_lol": {
+                "name": "ADSB.lol",
+                "type": "ADS-B Ground",
+                "description": "Open ADS-B public network point feeds",
+                "color": "#06b6d4",
             },
             "ogn": {
                 "name": "Open Glider Network",
@@ -1041,3 +1468,42 @@ class DataSourceStatsView(APIView):
             "total": len(states),
             "source_count": len(source_counts),
         })
+
+
+class SatelliteCatalogView(APIView):
+    """
+    GET /api/v1/satellites/
+    Returns public CelesTrak satellite positions propagated with SGP4.
+    """
+
+    def get(self, request):
+        if not getattr(settings, "CELESTRAK_SATELLITES_ENABLED", True):
+            return _freshness_response(
+                {"error": "Satellite catalog disabled", "satellites": [], "count": 0},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        raw_groups = request.query_params.get("groups", "")
+        groups = [item.strip() for item in raw_groups.split(",") if item.strip()] or None
+        limit = _int_query_param(request, "limit", 650, 1, 1500)
+
+        try:
+            from .services.celestrak import fetch_satellite_catalog
+
+            payload = fetch_satellite_catalog(group_keys=groups, max_total=limit)
+            status_code = (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if payload.get("status") == "propagator_unavailable"
+                else status.HTTP_200_OK
+            )
+            return _freshness_response(payload, status_code=status_code)
+        except Exception as exc:
+            logger.warning("Satellite catalog fetch failed: %s", exc)
+            return _freshness_response(
+                {
+                    "error": "Satellite catalog unavailable",
+                    "satellites": [],
+                    "count": 0,
+                },
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )

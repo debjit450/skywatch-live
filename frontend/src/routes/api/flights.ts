@@ -5,6 +5,7 @@ import { fetchWithTimeout, jsonResponse } from "@/lib/api-safety";
 const TOKEN_URL =
   "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
 const STATES_URL = "https://opensky-network.org/api/states/all?extended=1";
+const MAX_POSITION_AGE_SECONDS = 180;
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
@@ -65,9 +66,28 @@ export const Route = createFileRoute("/api/flights")({
             );
           }
           const data = (await res.json()) as OpenSkyResponse;
-          const flights = parseFlights(data.states);
+          const nowSeconds = Date.now() / 1000;
+          let staleCount = 0;
+          let maxAgeSeconds = 0;
+          const flights = parseFlights(data.states).filter((flight) => {
+            const timestamp = flight.time_position ?? flight.last_contact;
+            const age = typeof timestamp === "number" ? nowSeconds - timestamp : Infinity;
+            if (age < -30 || age > MAX_POSITION_AGE_SECONDS) {
+              staleCount += 1;
+              return false;
+            }
+            maxAgeSeconds = Math.max(maxAgeSeconds, age);
+            return true;
+          });
           return jsonResponse(
-            { time: data.time, flights, authenticated: !!token },
+            {
+              time: data.time,
+              flights,
+              authenticated: !!token,
+              source: "opensky",
+              stale_count: staleCount,
+              max_age_seconds: Math.round(maxAgeSeconds * 10) / 10,
+            },
             {
               status: 200,
               headers: {

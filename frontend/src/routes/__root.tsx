@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 
 import appCss from "../styles.css?url";
+import { Sentry } from "@/lib/sentry";
 
 function NotFoundComponent() {
   return (
@@ -91,6 +92,24 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
     links: [
       {
+        rel: "icon",
+        href: "/favicon.svg",
+        type: "image/svg+xml",
+      },
+      {
+        rel: "preconnect",
+        href: "https://fonts.googleapis.com",
+      },
+      {
+        rel: "preconnect",
+        href: "https://fonts.gstatic.com",
+        crossOrigin: "anonymous",
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Outfit:wght@300..800&display=swap",
+      },
+      {
         rel: "stylesheet",
         href: appCss,
       },
@@ -118,10 +137,17 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const router = useRouter();
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <Outlet />
-    </QueryClientProvider>
+    <Sentry.ErrorBoundary
+      fallback={
+        <ErrorComponent error={new Error("Application error")} reset={() => router.invalidate()} />
+      }
+    >
+      <QueryClientProvider client={queryClient}>
+        <Outlet />
+      </QueryClientProvider>
+    </Sentry.ErrorBoundary>
   );
 }

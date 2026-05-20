@@ -40,4 +40,5 @@ export const anomalyIcons: Record<AnomalyType, LucideIcon> = {
   altitude_bust: Mountain,
   speed_envelope: Gauge,
   behavioral: AlertCircle,
+  custom_rule: ShieldAlert,
 };

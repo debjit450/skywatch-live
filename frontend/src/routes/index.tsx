@@ -11,7 +11,10 @@ import {
 } from "react";
 import {
   AlertTriangle,
+  BarChart3,
   Crosshair,
+  Keyboard,
+  LayoutDashboard,
   Loader2,
   Maximize2,
   Plane,
@@ -24,10 +27,12 @@ import { useFlights } from "@/hooks/useFlights";
 import { useAirports } from "@/hooks/useAirports";
 import { useEnrichment } from "@/hooks/useEnrichment";
 import { useFlightTrack } from "@/hooks/useFlightTrack";
+import { useSatellites } from "@/hooks/useSatellites";
 import TopBar from "@/components/TopBar";
 import GlobalDashboard from "@/components/GlobalDashboard";
 import FlightDetailPanel from "@/components/FlightDetailPanel";
 import HelicopterIcon from "@/components/HelicopterIcon";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import type { AnomalousFlight } from "@/lib/anomaly";
 import type { Flight } from "@/lib/opensky";
 import type { FlightTrackData, FlightTrackPoint } from "@/lib/flightTrack";
@@ -44,10 +49,15 @@ import {
   DEFAULT_FLIGHT_FILTERS,
   type FlightFilters,
 } from "@/lib/flightFilters";
+import { Sentry } from "@/lib/sentry";
 
 const MapView = lazy(() => import("@/components/MapView"));
+const AnalyticsPanel = lazy(() => import("@/components/AnalyticsPanel"));
+const AlertRulesPanel = lazy(() => import("@/components/AlertRulesPanel"));
+const DashboardLayoutPanel = lazy(() => import("@/components/DashboardLayoutPanel"));
 type ThemeMode = "dark" | "light";
 const THEME_STORAGE_KEY = "skywatch-theme";
+const TOUR_STORAGE_KEY = "skywatch_tour_complete";
 const SELECTED_TRAIL_MAX_POINTS = 360;
 const MIN_TRAIL_DISTANCE_KM = 0.03;
 const EMERGENCY_REPEAT_MS = 10 * 60 * 1000;
@@ -163,7 +173,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Real-time global flight surveillance with anomaly detection from OpenSky Network data.",
+          "Real-time global flight awareness with anomaly detection, public ADS-B feeds, and CelesTrak satellite data.",
       },
     ],
   }),
@@ -179,6 +189,10 @@ function Index() {
     isInitialLoading,
     errorMessage,
     authenticated,
+    feedSource,
+    sourceCounts,
+    staleCount,
+    maxAgeSeconds,
     refresh,
     anomalyHistory,
     firstSeenPositions,
@@ -190,6 +204,7 @@ function Index() {
     errorMessage: airportErrorMessage,
     isFallback: airportIsFallback,
   } = useAirports();
+  const satelliteCatalog = useSatellites();
   const [mounted, setMounted] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
@@ -203,6 +218,11 @@ function Index() {
   const [themeReady, setThemeReady] = useState(false);
   const [selectedLiveTrail, setSelectedLiveTrail] = useState<FlightTrackPoint[]>([]);
   const [emergencyToasts, setEmergencyToasts] = useState<EmergencyToast[]>([]);
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showAlertRules, setShowAlertRules] = useState(false);
+  const [showLayoutPanel, setShowLayoutPanel] = useState(false);
+  const [tourStep, setTourStep] = useState<number | null>(null);
   const selectedTrailIdRef = useRef<string | null>(null);
   const seenEmergencyRef = useRef<Map<string, number>>(new Map());
 
@@ -240,8 +260,93 @@ function Index() {
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
-    const nextTheme: ThemeMode = saved === "light" || saved === "dark" ? saved : "dark";
+    const toggleAnalytics = () => setShowAnalytics((v) => !v);
+    const toggleAlertRules = () => setShowAlertRules((v) => !v);
+    const toggleLayout = () => setShowLayoutPanel((v) => !v);
+    const toggleShortcuts = () => setShowShortcutHelp((v) => !v);
+
+    window.addEventListener("skywatch:toggle-analytics", toggleAnalytics);
+    window.addEventListener("skywatch:toggle-alert-rules", toggleAlertRules);
+    window.addEventListener("skywatch:toggle-layout", toggleLayout);
+    window.addEventListener("skywatch:toggle-shortcuts", toggleShortcuts);
+
+    return () => {
+      window.removeEventListener("skywatch:toggle-analytics", toggleAnalytics);
+      window.removeEventListener("skywatch:toggle-alert-rules", toggleAlertRules);
+      window.removeEventListener("skywatch:toggle-layout", toggleLayout);
+      window.removeEventListener("skywatch:toggle-shortcuts", toggleShortcuts);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (window.localStorage.getItem(TOUR_STORAGE_KEY) !== "true") {
+      setTourStep(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authenticated !== null) {
+      Sentry.setUser({ id: authenticated ? "authenticated" : "anonymous" });
+    }
+  }, [authenticated]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        target?.isContentEditable;
+      if (typing && event.key !== "Escape") return;
+
+      if (event.key === "?") {
+        event.preventDefault();
+        setShowShortcutHelp(true);
+      } else if (event.key.toLowerCase() === "f") {
+        document.querySelector<HTMLInputElement>('input[aria-label="Target search"]')?.focus();
+      } else if (event.key.toLowerCase() === "a") {
+        setIsDashboardCollapsed(false);
+        window.dispatchEvent(new CustomEvent("skywatch:open-anomalies"));
+      } else if (event.key.toLowerCase() === "m") {
+        window.dispatchEvent(new CustomEvent("skywatch:toggle-map-layers"));
+      } else if (event.key === "Escape") {
+        setShowShortcutHelp(false);
+        setShowAnalytics(false);
+        setShowAlertRules(false);
+        setShowLayoutPanel(false);
+        setTourStep(null);
+        setIsPanelOpen(false);
+      } else if (["1", "2", "3", "4", "5"].includes(event.key)) {
+        const zooms = [2, 4, 6, 8, 10];
+        window.dispatchEvent(
+          new CustomEvent("skywatch:set-map-zoom", { detail: zooms[Number(event.key) - 1] }),
+        );
+      } else if (event.key.toLowerCase() === "r") {
+        void refresh();
+      } else if (event.key.toLowerCase() === "p") {
+        window.dispatchEvent(new CustomEvent("skywatch:toggle-predictions"));
+      } else if (event.key.toLowerCase() === "w") {
+        window.dispatchEvent(new CustomEvent("skywatch:toggle-weather"));
+      } else if (event.key.toLowerCase() === "s") {
+        window.dispatchEvent(new CustomEvent("skywatch:toggle-satellites"));
+      } else if (event.key.toLowerCase() === "t") {
+        window.dispatchEvent(new CustomEvent("skywatch:toggle-tfr"));
+      } else if (event.key.toLowerCase() === "c") {
+        setShowAnalytics((value) => !value);
+      } else if (event.key.toLowerCase() === "u") {
+        setShowAlertRules((value) => !value);
+      } else if (event.key.toLowerCase() === "l") {
+        setShowLayoutPanel((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [refresh]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null;
+    const nextTheme: ThemeMode = stored === "light" || stored === "dark" ? stored : "dark";
     setTheme(nextTheme);
     setThemeReady(true);
     document.documentElement.dataset.theme = nextTheme;
@@ -290,8 +395,8 @@ function Index() {
     selectedId,
     flights.find((f) => f.icao24 === selectedId)?.callsign?.trim() || null,
     selectedFlight ? currentAnomalousMap.has(selectedFlight.icao24) : false,
-    selectedFlight?.latitude ?? null,
-    selectedFlight?.longitude ?? null,
+    firstSeen?.lat ?? selectedFlight?.latitude ?? null,
+    firstSeen?.lon ?? selectedFlight?.longitude ?? null,
   );
   const flightTrack = useFlightTrack(selectedId, Boolean(selectedId));
   const displayFlightTrack = useMemo(
@@ -456,7 +561,15 @@ function Index() {
     <div
       className={`sw-app-shell theme-${theme} ${isDashboardCollapsed ? "sidebar-collapsed" : ""}`}
     >
+      {/* Liquid Ambient Blobs for Glassmorphism */}
+      <div className="sw-liquid-ambient-container">
+        <div className="sw-liquid-blob sw-liquid-blob-1" />
+        <div className="sw-liquid-blob sw-liquid-blob-2" />
+        <div className="sw-liquid-blob sw-liquid-blob-3" />
+      </div>
+
       <TopBar
+        flights={flights}
         flightCount={flights.length}
         inAir={inAir}
         anomalyCount={currentAnomalousMap.size}
@@ -467,29 +580,39 @@ function Index() {
         airportCountryCount={airportCountryCount}
         airportStatus={airportStatus}
         airportIsFallback={airportIsFallback}
+        satelliteCount={satelliteCatalog.satellites.length}
+        satelliteStatus={satelliteCatalog.status}
+        feedSource={feedSource}
+        sourceCounts={sourceCounts}
+        staleCount={staleCount}
+        maxAgeSeconds={maxAgeSeconds}
         filteredFlightCount={flightFilterResult.matched}
         activeFilterCount={flightFilterResult.activeFilterCount}
         selectedCountry={selectedCountry}
         onSelectCountry={handleSelectCountry}
         theme={theme}
         onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+        isDashboardCollapsed={isDashboardCollapsed}
       />
 
       <main className="sw-map-stage">
         {mounted ? (
           <Suspense fallback={<MapFallback />}>
-            <MapView
-              flights={visibleFlights}
-              anomalyMap={currentAnomalousMap}
-              selectedId={selectedId}
-              onSelect={handleSelect}
-              focus={focus}
-              airports={airports}
-              enrichmentRoute={enrichment.data?.route ?? null}
-              selectedFlight={selectedFlight}
-              selectedFlightTrack={displayFlightTrack}
-              theme={theme}
-            />
+            <ErrorBoundary label="Map">
+              <MapView
+                flights={visibleFlights}
+                anomalyMap={currentAnomalousMap}
+                selectedId={selectedId}
+                onSelect={handleSelect}
+                focus={focus}
+                airports={airports}
+                enrichmentRoute={enrichment.data?.route ?? null}
+                selectedFlight={selectedFlight}
+                selectedFlightTrack={displayFlightTrack}
+                satellites={satelliteCatalog.satellites}
+                theme={theme}
+              />
+            </ErrorBoundary>
           </Suspense>
         ) : (
           <MapFallback />
@@ -542,6 +665,12 @@ function Index() {
             enrichmentLoading={enrichment.loading}
             flightTrack={displayFlightTrack}
             flightTrackLoading={flightTrack.loading}
+            style={{
+              left: "24px",
+              right: "auto",
+              bottom: "24px",
+              zIndex: 1300
+            }}
           />
         ) : selectedFlight && isPanelOpen && isFlightPanelMinimized ? (
           <FlightDetailRestoreDock
@@ -551,6 +680,12 @@ function Index() {
             onClose={() => {
               setIsPanelOpen(false);
               setIsFlightPanelMinimized(false);
+            }}
+            style={{
+              left: "24px",
+              right: "auto",
+              bottom: "24px",
+              zIndex: 1210
             }}
           />
         ) : (
@@ -566,27 +701,83 @@ function Index() {
             isLoading={flightTrack.loading}
             onToggleFollow={() => setIsFollowingSelected((value) => !value)}
             onRefreshTrack={flightTrack.refresh}
+            style={{
+              right: isDashboardCollapsed ? "96px" : "412px",
+              left: "auto",
+              bottom: "24px",
+              zIndex: 1200,
+              transition: "all 0.3s ease",
+            }}
+          />
+        )}
+        <Suspense fallback={null}>
+          {showAnalytics && (
+            <AnalyticsPanel
+              flights={flights}
+              anomalies={currentAnomalies}
+              onClose={() => setShowAnalytics(false)}
+            />
+          )}
+          {showAlertRules && <AlertRulesPanel onClose={() => setShowAlertRules(false)} />}
+          {showLayoutPanel && (
+            <DashboardLayoutPanel
+              userId={authenticated ? "authenticated" : "anonymous"}
+              onClose={() => setShowLayoutPanel(false)}
+            />
+          )}
+        </Suspense>
+        {showShortcutHelp && (
+          <ShortcutHelp
+            onClose={() => setShowShortcutHelp(false)}
+            onRestartTour={() => {
+              window.localStorage.removeItem(TOUR_STORAGE_KEY);
+              setTourStep(0);
+              setShowShortcutHelp(false);
+            }}
+          />
+        )}
+        {tourStep !== null && (
+          <OnboardingTour
+            step={tourStep}
+            onNext={() => {
+              if (tourStep >= 4) {
+                window.localStorage.setItem(TOUR_STORAGE_KEY, "true");
+                setTourStep(null);
+              } else {
+                setTourStep(tourStep + 1);
+              }
+            }}
+            onSkip={() => {
+              window.localStorage.setItem(TOUR_STORAGE_KEY, "true");
+              setTourStep(null);
+            }}
           />
         )}
       </main>
 
-      <GlobalDashboard
-        flights={visibleFlights}
-        allFlights={flights}
-        anomalies={visibleAnomalies}
-        totalFlights={flightFilterResult.total}
-        filters={flightFilters}
-        activeFilterLabels={flightFilterResult.activeFilterLabels}
-        activeFilterCount={flightFilterResult.activeFilterCount}
-        selectedId={selectedId}
-        status={status}
-        isLoading={isInitialLoading}
-        onSelect={handleSelect}
-        onFiltersChange={setFlightFilters}
-        onClearFilters={() => setFlightFilters({ ...DEFAULT_FLIGHT_FILTERS })}
-        isCollapsed={isDashboardCollapsed}
-        onToggleCollapse={() => setIsDashboardCollapsed((v) => !v)}
-      />
+      <ErrorBoundary label="Global dashboard">
+        <GlobalDashboard
+          flights={visibleFlights}
+          allFlights={flights}
+          anomalies={currentAnomalies}
+          totalFlights={flightFilterResult.total}
+          filters={flightFilters}
+          satellites={satelliteCatalog.satellites}
+          satelliteGroups={satelliteCatalog.groups}
+          satelliteStatus={satelliteCatalog.status}
+          satelliteErrorMessage={satelliteCatalog.errorMessage}
+          activeFilterLabels={flightFilterResult.activeFilterLabels}
+          activeFilterCount={flightFilterResult.activeFilterCount}
+          selectedId={selectedId}
+          status={status}
+          isLoading={isInitialLoading}
+          onSelect={handleSelect}
+          onFiltersChange={setFlightFilters}
+          onClearFilters={() => setFlightFilters({ ...DEFAULT_FLIGHT_FILTERS })}
+          isCollapsed={isDashboardCollapsed}
+          onToggleCollapse={() => setIsDashboardCollapsed((v) => !v)}
+        />
+      </ErrorBoundary>
     </div>
   );
 }
@@ -635,19 +826,103 @@ function EmergencyAlertStack({
   );
 }
 
+function ShortcutHelp({
+  onClose,
+  onRestartTour,
+}: {
+  onClose: () => void;
+  onRestartTour: () => void;
+}) {
+  const shortcuts = [
+    ["F", "Focus flight search"],
+    ["A", "Open anomaly feed"],
+    ["Esc", "Close panels"],
+    ["1-5", "Jump map zoom"],
+    ["R", "Refresh data"],
+    ["P", "Toggle predictions"],
+    ["W", "Toggle weather"],
+    ["S", "Toggle satellites"],
+    ["T", "Toggle TFR"],
+    ["C", "Traffic analytics"],
+    ["U", "Alert rules"],
+    ["L", "Dashboard layout"],
+  ];
+  return (
+    <div className="sw-modal-backdrop" role="dialog" aria-modal="true">
+      <section className="sw-shortcut-modal">
+        <header>
+          <strong>Keyboard Shortcuts</strong>
+          <button type="button" onClick={onClose}>
+            <X />
+          </button>
+        </header>
+        <dl>
+          {shortcuts.map(([key, label]) => (
+            <div key={key}>
+              <dt>{key}</dt>
+              <dd>{label}</dd>
+            </div>
+          ))}
+        </dl>
+        <button type="button" onClick={onRestartTour}>
+          Restart tour
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function OnboardingTour({
+  step,
+  onNext,
+  onSkip,
+}: {
+  step: number;
+  onNext: () => void;
+  onSkip: () => void;
+}) {
+  const steps = [
+    [
+      "Map overview",
+      "Track live aircraft, selected routes, predictions, and weather.",
+    ],
+    ["Flight search", "Use the dashboard search and filters to narrow the live feed."],
+    ["Anomaly feed", "Open the anomaly tab to review live detector and custom-rule alerts."],
+    ["Alert rules", "Create threshold rules or geofences from the alert rules panel."],
+    ["Shortcuts", "Press ? any time to review keyboard shortcuts."],
+  ];
+  const current = steps[step] ?? steps[0];
+  return (
+    <div className="sw-tour-card">
+      <strong>{current[0]}</strong>
+      <p>{current[1]}</p>
+      <div>
+        <button type="button" onClick={onSkip}>
+          Skip tour
+        </button>
+        <button type="button" onClick={onNext}>
+          {step >= steps.length - 1 ? "Done" : "Next"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function FlightDetailRestoreDock({
   callsign,
   icao24,
   onOpen,
   onClose,
+  style,
 }: {
   callsign: string;
   icao24: string;
   onOpen: () => void;
   onClose: () => void;
+  style?: React.CSSProperties;
 }) {
   return (
-    <div className="sw-flight-dock">
+    <div className="sw-flight-dock" style={style}>
       <button
         type="button"
         className="sw-flight-dock-open"
@@ -682,6 +957,7 @@ function TrackingPanel({
   followToggleEnabled = true,
   onToggleFollow,
   onRefreshTrack,
+  style,
 }: {
   callsign: string;
   isFollowing: boolean;
@@ -691,9 +967,10 @@ function TrackingPanel({
   followToggleEnabled?: boolean;
   onToggleFollow: () => void;
   onRefreshTrack: () => void | Promise<void> | undefined;
+  style?: React.CSSProperties;
 }) {
   return (
-    <div className="sw-tracking-panel">
+    <div className="sw-tracking-panel" style={style}>
       <div className="sw-tracking-copy">
         <Crosshair />
         <span>

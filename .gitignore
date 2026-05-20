@@ -12,7 +12,8 @@ dist
 dist-ssr
 .output
 .vinxi
-.tanstack/**
+.tanstack/
+frontend/.tanstack/
 .nitro
 
 # OurAirports raw CSV (re-download with the URL in airports.ts)
@@ -48,6 +49,7 @@ backend/db.sqlite3
 backend/*.sqlite3
 backend/staticfiles/
 backend/ml/models/
+backend/flights/services/aircraftDatabase.csv
 __pycache__/
 *.py[cod]
 *$py.class
@@ -64,3 +66,4 @@ __pycache__/
 *.njsproj
 *.sln
 *.sw?
+

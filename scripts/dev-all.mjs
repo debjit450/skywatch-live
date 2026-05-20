@@ -8,6 +8,7 @@ function start(name, args) {
   const child = spawn(npmCommand, args, {
     env: process.env,
     stdio: "inherit",
+    shell: true,
   });
 
   child.on("exit", (code, signal) => {
@@ -59,4 +60,4 @@ process.on("SIGTERM", () => {
 });
 
 start("frontend", ["run", "dev"]);
-start("backend", ["run", "backend-dev"]);
+start("backend", ["run", "backend:dev"]);

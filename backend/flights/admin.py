@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Aircraft, FlightState, FlightRoute, AnomalyEvent, SystemMetrics
+from .models import Aircraft, FlightState, FlightRoute, FlightPosition, AnomalyEvent, SystemMetrics, AlertRule
 
 
 @admin.register(Aircraft)
@@ -23,10 +23,17 @@ class FlightRouteAdmin(admin.ModelAdmin):
     search_fields = ["aircraft__icao24", "session_id"]
 
 
+@admin.register(FlightPosition)
+class FlightPositionAdmin(admin.ModelAdmin):
+    list_display = ["aircraft", "timestamp", "latitude", "longitude", "altitude", "velocity"]
+    search_fields = ["aircraft__icao24"]
+    date_hierarchy = "timestamp"
+
+
 @admin.register(AnomalyEvent)
 class AnomalyEventAdmin(admin.ModelAdmin):
-    list_display = ["aircraft", "anomaly_type", "severity", "confidence_score", "ml_score", "detected_at", "is_active"]
-    list_filter = ["anomaly_type", "severity", "is_active"]
+    list_display = ["aircraft", "anomaly_type", "severity", "source", "confidence_score", "ml_score", "detected_at", "is_active"]
+    list_filter = ["anomaly_type", "severity", "source", "feedback", "is_active"]
     search_fields = ["aircraft__icao24"]
     date_hierarchy = "detected_at"
 
@@ -35,3 +42,10 @@ class AnomalyEventAdmin(admin.ModelAdmin):
 class SystemMetricsAdmin(admin.ModelAdmin):
     list_display = ["timestamp", "total_flights", "airborne", "anomaly_count", "anomaly_rate"]
     date_hierarchy = "timestamp"
+
+
+@admin.register(AlertRule)
+class AlertRuleAdmin(admin.ModelAdmin):
+    list_display = ["name", "type", "user", "active", "updated_at"]
+    list_filter = ["type", "active"]
+    search_fields = ["name", "user__username"]

@@ -1,7 +1,7 @@
 """DRF Serializers for the SkyWatch API."""
 
 from rest_framework import serializers
-from .models import Aircraft, FlightState, FlightRoute, AnomalyEvent, SystemMetrics
+from .models import Aircraft, FlightState, FlightRoute, FlightPosition, AnomalyEvent, SystemMetrics, AlertRule
 
 
 class FlightStateSerializer(serializers.ModelSerializer):
@@ -34,6 +34,8 @@ class FlightStateSerializer(serializers.ModelSerializer):
             "category",
             "ml_anomaly_score",
             "data_source",
+            "predicted_path",
+            "prediction_confidence",
         ]
 
     def get_callsign(self, obj):
@@ -69,6 +71,8 @@ class FlightStateLiveSerializer(serializers.Serializer):
     category = serializers.IntegerField(required=False, default=0)
     ml_anomaly_score = serializers.FloatField(allow_null=True, required=False)
     data_source = serializers.CharField(required=False, default="")
+    predicted_path = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+    prediction_confidence = serializers.FloatField(required=False, default=0.0)
 
 
 class FlightRouteSerializer(serializers.ModelSerializer):
@@ -108,6 +112,13 @@ class AnomalyEventSerializer(serializers.ModelSerializer):
             "confidence_score",
             "ml_score",
             "details",
+            "explanation",
+            "isolation_score",
+            "lstm_score",
+            "combined_score",
+            "source",
+            "alert_rule",
+            "feedback",
             "detected_at",
             "resolved_at",
             "is_active",
@@ -142,6 +153,7 @@ class AnomalyEventCompactSerializer(serializers.ModelSerializer):
             "severity",
             "confidence_score",
             "ml_score",
+            "source",
             "detected_at",
             "is_active",
         ]
@@ -179,6 +191,32 @@ class SystemMetricsSerializer(serializers.ModelSerializer):
     class Meta:
         model = SystemMetrics
         fields = "__all__"
+
+
+class FlightPositionSerializer(serializers.ModelSerializer):
+    icao24 = serializers.CharField(source="aircraft_id")
+
+    class Meta:
+        model = FlightPosition
+        fields = [
+            "icao24",
+            "timestamp",
+            "latitude",
+            "longitude",
+            "altitude",
+            "velocity",
+            "heading",
+            "vertical_rate",
+            "on_ground",
+            "data_source",
+        ]
+
+
+class AlertRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AlertRule
+        fields = ["id", "name", "type", "config", "active", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
 
 
 class AnalyticsSerializer(serializers.Serializer):

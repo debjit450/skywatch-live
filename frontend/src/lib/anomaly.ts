@@ -20,12 +20,22 @@ export type AnomalyType =
   | "proximity"
   | "altitude_bust"
   | "speed_envelope"
-  | "behavioral";
+  | "behavioral"
+  | "custom_rule";
 
 export interface Anomaly {
+  id?: number;
   type: AnomalyType;
   label: string;
   severity: Severity;
+  source?: string;
+  explanation?: Array<{
+    factor: string;
+    value: string | number | null;
+    deviation: string;
+    description: string;
+    severity?: Severity | string;
+  }>;
 }
 
 export interface AnomalousFlight extends Flight {

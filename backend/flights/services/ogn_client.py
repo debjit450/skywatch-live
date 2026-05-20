@@ -234,11 +234,6 @@ def _ogn_listener():
 def start_ogn_listener():
     """Start the OGN background listener thread."""
     global _ogn_thread, _ogn_running
-    
-    import sys
-    import os
-    if "celery" in sys.argv[0] or os.environ.get("CELERY_WORKER_RUNNING"):
-        return
 
     if _ogn_thread and _ogn_thread.is_alive():
         return

@@ -1,14 +1,18 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleMarker,
   MapContainer,
+  Marker,
+  Polygon,
   Polyline,
   Popup,
   TileLayer,
+  Tooltip,
   useMap,
   ZoomControl,
 } from "react-leaflet";
 import L from "leaflet";
+import { CloudSun, Navigation2, Pause, Play, Satellite, ShieldAlert, Sun, Cloud, CloudLightning, Wind, Eye, Thermometer, Compass, Hash, Loader2, Plane } from "lucide-react";
 import type { Flight } from "@/lib/opensky";
 import type { AnomalousFlight } from "@/lib/anomaly";
 import type { FlightRouteInfo } from "@/lib/enrichment-types";
@@ -16,14 +20,12 @@ import type { FlightTrackData, FlightTrackPoint, FlightLayover } from "@/lib/fli
 import { predictFlightState, type PredictedFlightState } from "@/lib/prediction";
 import { getAirportCode, getAirportTypeLabel, type Airport } from "@/lib/airports";
 import { getSourceColor } from "@/lib/data-sources";
-import { calculateGreatCirclePoints, getAltitudeColor } from "@/lib/geo";
-import {
-  classifyFlight,
-  getClassInfo,
-  getClassesForLegend,
-  countByClass,
-  type AircraftClass,
-} from "@/lib/aircraft-class";
+import { calculateGreatCirclePoints } from "@/lib/geo";
+import { classifyFlight, getClassInfo } from "@/lib/aircraft-class";
+import { satelliteColor, type SatelliteObject } from "@/lib/satellites";
+import { gcBearing, gcDistanceKm } from "@/lib/format";
+import { fetchBackendJson } from "@/lib/backend-api";
+
 
 interface MapViewProps {
   flights: Flight[];
@@ -35,6 +37,7 @@ interface MapViewProps {
   enrichmentRoute: FlightRouteInfo | null;
   selectedFlight?: Flight | null;
   selectedFlightTrack?: FlightTrackData | null;
+  satellites: SatelliteObject[];
   theme: "dark" | "light";
 }
 
@@ -47,6 +50,11 @@ interface RenderedFlight {
   point: L.Point;
   originPoint: L.Point | null;
 }
+interface FlightCluster {
+  point: L.Point;
+  latlng: L.LatLngExpression;
+  flights: Flight[];
+}
 interface TrackRenderSegment {
   id: string;
   points: FlightTrackPoint[];
@@ -56,6 +64,44 @@ interface RenderLayover extends FlightLayover {
   label: string;
   airportName?: string | null;
   distanceToAirportKm?: number | null;
+}
+
+interface WeatherMetar {
+  station: string;
+  raw: string;
+  wind_direction: number | null;
+  wind_speed: number | null;
+  visibility: number | null;
+  ceiling: number | null;
+  temperature: number | null;
+  flight_category: "VFR" | "MVFR" | "IFR" | "LIFR" | string;
+}
+
+interface TfrFeature {
+  type: "Feature";
+  geometry?: { type: string; coordinates: number[][][] | number[][][][] };
+  properties?: Record<string, unknown>;
+}
+
+interface WeatherPayload {
+  weather?: Record<string, WeatherMetar>;
+}
+
+interface TfrPayload {
+  features?: TfrFeature[];
+}
+
+interface PlaybackPayload {
+  positions?: PlaybackPosition[];
+}
+
+interface PlaybackPosition {
+  timestamp: string;
+  latitude: number;
+  longitude: number;
+  altitude: number | null;
+  velocity: number | null;
+  heading: number | null;
 }
 
 const KIND_PRIORITY: Record<RenderKind, number> = {
@@ -71,6 +117,7 @@ const FLIGHT_INTERACTION_REDRAW_MS = 120;
 const AIRPORT_INDEX_CELL_DEGREES = 5;
 const TRACK_CONNECT_MAX_GAP_MS = 25 * 60 * 1000;
 const TRACK_CONNECT_MAX_DISTANCE_KM = 800;
+const ROUTE_ENDPOINT_MATCH_KM = 45;
 const TRACK_MARKER_PANE = "selectedTrackPane";
 
 interface AirportIndex {
@@ -265,11 +312,38 @@ function livePointFromFlight(flight: Flight | null | undefined): FlightTrackPoin
   };
 }
 
+function livePointFromPredictedFlight(
+  flight: Flight | null | undefined,
+  predicted: PredictedFlightState,
+): FlightTrackPoint | null {
+  if (!flight || !hasPredictedPosition(predicted)) return null;
+  if (!Number.isFinite(predicted.latitude) || !Number.isFinite(predicted.longitude)) return null;
+
+  return {
+    lat: predicted.latitude,
+    lon: predicted.longitude,
+    alt: predicted.baroAltitude ?? predicted.geoAltitude ?? null,
+    speed: flight.velocity ?? null,
+    heading: flight.true_track ?? null,
+    time: new Date(Date.now()).toISOString(),
+    onGround: flight.on_ground,
+  };
+}
+
 function canConnectTrackPoints(a: FlightTrackPoint, b: FlightTrackPoint): boolean {
   const gapMs = Math.abs(trackPointTimeMs(b) - trackPointTimeMs(a));
   return (
     gapMs <= TRACK_CONNECT_MAX_GAP_MS && trackDistanceKm(a, b) <= TRACK_CONNECT_MAX_DISTANCE_KM
   );
+}
+
+function positionsAreNear(
+  a: [number, number] | null,
+  b: [number, number] | null,
+  maxDistanceKm = ROUTE_ENDPOINT_MATCH_KM,
+): boolean {
+  if (!a || !b) return false;
+  return trackDistanceKm({ lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] }) <= maxDistanceKm;
 }
 
 function isHelicopter(flight: Flight): boolean {
@@ -318,18 +392,18 @@ function getKind(
 
 const MAP_COLORS = {
   activeAircraft: "#00e5ff",
-  selectedAircraft: "#00ff7a",
-  anomalyAircraft: "#ffb020",
-  groundAircraft: "#64748b",
-  helicopterAircraft: "#22d3ee",
-  selectedRing: "rgba(0, 255, 122, 0.82)",
-  anomalyRing: "rgba(255, 176, 32, 0.62)",
-  trackHalo: "#020617",
-  trackGlow: "#facc15",
-  trackCore: "#f97316",
-  trackCurrent: "#22c55e",
-  routeDash: "#f97316",
-  routeEndpoint: "#facc15",
+  selectedAircraft: "#3b82f6", // tailwind blue-500
+  anomalyAircraft: "#f59e0b", // tailwind amber-500
+  groundAircraft: "#52525b", // tailwind zinc-600
+  helicopterAircraft: "#06b6d4", // tailwind cyan-500
+  selectedRing: "rgba(59, 130, 246, 0.82)", // blue-500
+  anomalyRing: "rgba(245, 158, 11, 0.62)", // amber-500
+  trackHalo: "rgba(9, 9, 11, 0.78)", // zinc-950
+  trackGlow: "#60a5fa", // blue-400
+  trackCore: "#3b82f6", // blue-500
+  trackCurrent: "#60a5fa",
+  routeDash: "rgba(161, 161, 170, 0.58)", // zinc-400
+  routeEndpoint: "#facc15", // yellow-400
   airportLarge: "rgba(168, 130, 200, 0.7)",
   airportMedium: "rgba(130, 150, 200, 0.6)",
   airportSmall: "rgba(140, 140, 140, 0.45)",
@@ -342,22 +416,9 @@ const MAP_COLORS = {
 function aircraftColor(flight: Flight, kind: RenderKind): string {
   if (kind === "selected") return MAP_COLORS.selectedAircraft;
   if (kind === "anomaly") return MAP_COLORS.anomalyAircraft;
-  // Use aircraft class-based coloring
   const cls = classifyFlight(flight);
   const info = getClassInfo(cls);
   return info.color;
-}
-
-function trackPointColor(point: FlightTrackPoint): string {
-  if (point.alt !== null) return getAltitudeColor(point.alt);
-  if (point.speed !== null) {
-    if (point.speed < 60) return "#fbbf24";
-    if (point.speed < 140) return "#84cc16";
-    if (point.speed < 230) return "#22c55e";
-    if (point.speed < 310) return "#06b6d4";
-    return "#3b82f6";
-  }
-  return MAP_COLORS.trackCore;
 }
 
 function routeAirportCode(airport: FlightRouteInfo["origin"]): string | null {
@@ -373,6 +434,10 @@ const helicopterPath = new Path2D(
   "M60.64 28.1a1.24 1.24 0 0 0-1.27-1.22l-14.89-.33c.61-.91 1.51-2.05 2.78-3.57 6.16-7.36 4.19-9.8 4.19-9.8s-2.28-2-9.91 3.84c-1.31 1-2.34 1.76-3.19 2.31l.3-14.09a1.19 1.19 0 1 0-2.38 0l-.34 15.33c-2 .44-3-1.25-7.33-3.31 0 0-2.34.91-2.86 2.77a39.41 39.41 0 0 1 3.39 6.24l-14.5-.31a1.2 1.2 0 1 0-.05 2.39l14.6.31a1.28 1.28 0 0 0 .35.59l-9.69 12.36-4.57-3.24.54-1.25S12 39.7 11.5 41.34l-.14 2 1.37-.48.41-1.31L16 45.91s-.79.9-.24 1.47 1.55-.1 1.55-.1l4.35 3.1-1.32.35-.54 1.35h2c1.65-.39 4.4-4.13 4.4-4.13l-1.28.49-3-4.71 12.81-9.15a1.31 1.31 0 0 0 1 .45l-.32 15a1.19 1.19 0 1 0 2.38 0l.21-14.8a42.17 42.17 0 0 1 5.67 3.47c1.88-.44 2.87-2.75 2.87-2.75-1.71-4.1-3.24-5.34-3.09-7l15.87.34a1.25 1.25 0 0 0 1.32-1.19Z",
 );
 
+const satellitePath = new Path2D(
+  "M-8 -1 L-8 1 L-3 1 L-3 3 L-1 3 L-1 8 L1 8 L1 3 L3 3 L3 1 L8 1 L8 -1 L3 -1 L3 -3 L1 -3 L1 -8 L-1 -8 L-1 -3 L-3 -3 L-3 -1 Z",
+);
+
 function drawLabel(
   ctx: CanvasRenderingContext2D,
   text: string | null | undefined,
@@ -384,8 +449,8 @@ function drawLabel(
   ctx.save();
   ctx.font = "600 10px Inter, ui-sans-serif, system-ui, sans-serif";
   const width = Math.ceil(ctx.measureText(safeText).width) + 12;
-  ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
+  ctx.fillStyle = "rgba(9, 9, 11, 0.9)"; // zinc-950
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
   ctx.lineWidth = 1;
   ctx.fillRect(x + 9, y - 18, width, 18);
   ctx.strokeRect(x + 9, y - 18, width, 18);
@@ -435,7 +500,7 @@ function drawAircraft(
   }
 
   if (helicopter && kind !== "selected" && kind !== "anomaly") {
-    ctx.strokeStyle = "rgba(34, 211, 238, 0.48)";
+    ctx.strokeStyle = "rgba(6, 182, 212, 0.48)"; // cyan-500
     ctx.lineWidth = zoom < 4 ? 1.4 : 1.1;
     ctx.beginPath();
     ctx.arc(0, 0, zoom < 4 ? 15 : 12, 0, Math.PI * 2);
@@ -455,10 +520,10 @@ function drawAircraft(
   ctx.rotate(heading);
   const cls = classifyFlight(flight);
   const clsInfo = getClassInfo(cls);
-  ctx.shadowColor = kind === "anomaly" ? "rgba(255, 176, 32, 0.48)" : clsInfo.glowColor;
+  ctx.shadowColor = kind === "anomaly" ? "rgba(245, 158, 11, 0.48)" : clsInfo.glowColor;
   ctx.shadowBlur = kind === "selected" || kind === "anomaly" || helicopter ? 6 : 3;
   ctx.fillStyle = color;
-  ctx.strokeStyle = "rgba(2, 6, 23, 0.72)";
+  ctx.strokeStyle = "rgba(9, 9, 11, 0.82)"; // zinc-950
   ctx.lineWidth = 1;
 
   if (helicopter) {
@@ -470,14 +535,14 @@ function drawAircraft(
     ctx.fill(helicopterPath);
     ctx.shadowBlur = 0;
     ctx.lineWidth = 1.8 / iconScale;
-    ctx.strokeStyle = "rgba(240, 253, 244, 0.92)";
+    ctx.strokeStyle = "rgba(250, 250, 250, 0.92)"; // zinc-50
     ctx.stroke(helicopterPath);
     ctx.restore();
   } else if (kind === "selected") {
     ctx.fill(aircraftPath);
     ctx.shadowBlur = 0;
     ctx.lineWidth = 1.4;
-    ctx.strokeStyle = "rgba(240, 253, 244, 0.92)";
+    ctx.strokeStyle = "rgba(250, 250, 250, 0.92)";
     ctx.stroke(aircraftPath);
   } else {
     const iconScale = kind === "anomaly" ? 0.62 : 0.5;
@@ -524,20 +589,44 @@ function drawPredictionTrack(ctx: CanvasRenderingContext2D, item: RenderedFlight
   ctx.restore();
 }
 
-type FlightCanvasLayerProps = Pick<
-  MapViewProps,
-  "flights" | "anomalyMap" | "selectedId" | "onSelect"
->;
+function drawCluster(ctx: CanvasRenderingContext2D, cluster: FlightCluster) {
+  const count = cluster.flights.length;
+  const color = count > 50 ? "#f43f5e" : count >= 10 ? "#f59e0b" : "#10b981"; // rose, amber, emerald
+  ctx.save();
+  ctx.translate(cluster.point.x, cluster.point.y);
+  ctx.fillStyle = "rgba(9, 9, 11, 0.9)"; // zinc-950
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, count > 50 ? 22 : count >= 10 ? 18 : 15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#f8fafc"; // slate-50
+  ctx.font = "800 11px Inter, ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(count.toString(), 0, 0);
+  ctx.restore();
+}
 
-function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: FlightCanvasLayerProps) {
+interface FlightCanvasLayerProps {
+  flights: Flight[];
+  anomalyMap: Map<string, AnomalousFlight>;
+  selectedId: string | null;
+  onSelect: (icao24: string | null) => void;
+  showClustering: boolean;
+}
+
+function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect, showClustering }: FlightCanvasLayerProps) {
   const map = useMap();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
   const intervalRef = useRef<number | null>(null);
   const lastDrawAtRef = useRef(0);
   const throttleTimerRef = useRef<number | null>(null);
-  const propsRef = useRef({ flights, anomalyMap, selectedId });
-  propsRef.current = { flights, anomalyMap, selectedId };
+  const clustersRef = useRef<FlightCluster[]>([]);
+  const propsRef = useRef({ flights, anomalyMap, selectedId, showClustering });
+  propsRef.current = { flights, anomalyMap, selectedId, showClustering };
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -565,6 +654,7 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
       flights: currentFlights,
       anomalyMap: currentAnomalyMap,
       selectedId: currentSelectedId,
+      showClustering: currentShowClustering,
     } = propsRef.current;
     const bounds = map.getBounds().pad(0.08);
     const prefilterBounds = map.getBounds().pad(0.22);
@@ -573,6 +663,7 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
     const drawBuckets: RenderedFlight[][] = Array.from({ length: FLIGHT_DRAW_BUCKETS }, () => []);
     const declutterCellSize = flightDeclutterCellSize(zoom);
     const sampledFlights = new Map<string, RenderedFlight>();
+    const clusterCells = new Map<string, RenderedFlight[]>();
 
     for (const flight of currentFlights) {
       const isSelected = currentSelectedId === flight.icao24;
@@ -607,6 +698,14 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
         originPoint,
       };
 
+      if (currentShowClustering && zoom <= 10 && kind !== "selected" && kind !== "anomaly") {
+        const key = `${Math.floor(point.x / 40)}:${Math.floor(point.y / 40)}`;
+        const bucket = clusterCells.get(key) ?? [];
+        bucket.push(renderedFlight);
+        clusterCells.set(key, bucket);
+        continue;
+      }
+
       if (declutterCellSize > 0 && !isPriorityFlight(flight, kind)) {
         if (kind === "ground" && zoom < 4.5) continue;
 
@@ -617,7 +716,7 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
         if (
           !existing ||
           flightRenderScore(renderedFlight.flight, renderedFlight.kind) >
-            flightRenderScore(existing.flight, existing.kind)
+          flightRenderScore(existing.flight, existing.kind)
         ) {
           sampledFlights.set(cellKey, renderedFlight);
         }
@@ -631,6 +730,23 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
       drawBuckets[flightBucketPriority(item.flight, item.kind)].push(item);
     }
 
+    const clusters: FlightCluster[] = [];
+    for (const bucket of clusterCells.values()) {
+      if (bucket.length < 2) {
+        const item = bucket[0];
+        if (item) drawBuckets[flightBucketPriority(item.flight, item.kind)].push(item);
+        continue;
+      }
+      const x = bucket.reduce((sum, item) => sum + item.point.x, 0) / bucket.length;
+      const y = bucket.reduce((sum, item) => sum + item.point.y, 0) / bucket.length;
+      clusters.push({
+        point: L.point(x, y),
+        latlng: map.containerPointToLatLng([x, y]),
+        flights: bucket.map((item) => item.flight),
+      });
+    }
+    clustersRef.current = clusters;
+
     for (const bucket of drawBuckets) {
       for (const item of bucket) drawPredictionTrack(ctx, item, zoom);
     }
@@ -640,6 +756,8 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
         drawAircraft(ctx, item.flight, item.predicted, item.kind, item.point, zoom);
       }
     }
+
+    for (const cluster of clusters) drawCluster(ctx, cluster);
   }, [map]);
 
   const scheduleDraw = useCallback(() => {
@@ -709,7 +827,7 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
   useEffect(() => {
     const canvas = L.DomUtil.create(
       "canvas",
-      "sw-flight-canvas leaflet-zoom-animated",
+      "leaflet-zoom-animated", // Only leaflet native classes
     ) as HTMLCanvasElement;
     canvasRef.current = canvas;
     map.getPanes().overlayPane.appendChild(canvas);
@@ -751,10 +869,17 @@ function FlightCanvasLayer({ flights, anomalyMap, selectedId, onSelect }: Flight
 
   useEffect(() => {
     scheduleDraw();
-  }, [flights, anomalyMap, selectedId, scheduleDraw]);
+  }, [flights, anomalyMap, selectedId, showClustering, scheduleDraw]);
 
   useEffect(() => {
     const handleClick = (event: L.LeafletMouseEvent) => {
+      const cluster = clustersRef.current.find(
+        (item) => item.point.distanceTo(event.containerPoint) <= 24,
+      );
+      if (cluster) {
+        map.setView(cluster.latlng, Math.min(11, map.getZoom() + 2), { animate: true });
+        return;
+      }
       const flight = findNearestFlight(event.containerPoint);
       onSelect(flight ? flight.icao24 : null);
     };
@@ -784,28 +909,206 @@ function FlyTo({ focus }: { focus: MapViewProps["focus"] }) {
   return null;
 }
 
+const SATELLITE_PANE = "satelliteCanvasPane";
+const SATELLITE_PRIORITY: Record<string, number> = {
+  starlink: 0,
+  oneweb: 0,
+  earth_resources: 1,
+  weather: 2,
+  navigation: 2,
+  galileo: 2,
+  beidou: 2,
+  visual: 3,
+  stations: 4,
+};
+
+function satelliteFootprintRadiusPx(
+  map: L.Map,
+  satellite: SatelliteObject,
+  point: L.Point,
+  zoom: number,
+): number {
+  const altitudeKm = satellite.altitudeKm;
+  if (!altitudeKm || altitudeKm <= 0 || zoom < 3) return 0;
+
+  const earthRadiusKm = 6371;
+  const centralAngle = Math.acos(earthRadiusKm / (earthRadiusKm + altitudeKm));
+  const groundRadiusKm = earthRadiusKm * centralAngle;
+  const latDelta = Math.min(70, groundRadiusKm / 111.32);
+  const edgeLat = Math.max(-85, Math.min(85, satellite.latitude + latDelta));
+  const edgePoint = map.latLngToContainerPoint([edgeLat, satellite.longitude]);
+  return Math.max(0, Math.min(point.distanceTo(edgePoint), zoom >= 5 ? 180 : 92));
+}
+
+function SatelliteCanvasLayer({ satellites }: { satellites: SatelliteObject[] }) {
+  const map = useMap();
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const propsRef = useRef({ satellites });
+  propsRef.current = { satellites };
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const size = map.getSize();
+    const ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    if (canvas.width !== size.x * ratio || canvas.height !== size.y * ratio) {
+      canvas.width = size.x * ratio;
+      canvas.height = size.y * ratio;
+      canvas.style.width = `${size.x}px`;
+      canvas.style.height = `${size.y}px`;
+    }
+
+    L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, size.x, size.y);
+
+    const bounds = map.getBounds().pad(0.08);
+    const zoom = map.getZoom();
+    const declutterCell = zoom < 3 ? 42 : zoom < 4 ? 30 : 0;
+    const sampled = new Map<string, SatelliteObject>();
+    const visible: SatelliteObject[] = [];
+
+    for (const satellite of propsRef.current.satellites) {
+      if (!boundsContainLatLng(bounds, satellite.latitude, satellite.longitude)) continue;
+
+      if (declutterCell > 0) {
+        const point = map.latLngToContainerPoint([satellite.latitude, satellite.longitude]);
+        const key = `${Math.floor(point.x / declutterCell)}:${Math.floor(point.y / declutterCell)}`;
+        const existing = sampled.get(key);
+        const score = SATELLITE_PRIORITY[satellite.group] ?? 1;
+        const existingScore = existing ? (SATELLITE_PRIORITY[existing.group] ?? 1) : -1;
+        if (!existing || score > existingScore) sampled.set(key, satellite);
+        continue;
+      }
+
+      visible.push(satellite);
+    }
+
+    visible.push(...sampled.values());
+    visible.sort((a, b) => (SATELLITE_PRIORITY[a.group] ?? 1) - (SATELLITE_PRIORITY[b.group] ?? 1));
+
+    let labels = 0;
+    for (const satellite of visible) {
+      const point = map.latLngToContainerPoint([satellite.latitude, satellite.longitude]);
+      const color = satelliteColor(satellite.group);
+      const priority = SATELLITE_PRIORITY[satellite.group] ?? 1;
+      const radius = satellite.group === "stations" ? 3.2 : priority >= 3 ? 2.4 : 1.8;
+      const footprint = satelliteFootprintRadiusPx(map, satellite, point, zoom);
+
+      ctx.save();
+      if (footprint > 8 && priority >= 2) {
+        ctx.globalAlpha = satellite.group === "stations" ? 0.08 : 0.04;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([5, 7]);
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, footprint, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.globalAlpha = satellite.orbitQuality === "stale" ? 0.18 : 0.38;
+      ctx.translate(point.x, point.y);
+
+      // Draw satellite icon
+      const iconScale = radius / 4;
+      ctx.save();
+      ctx.scale(iconScale, iconScale);
+      ctx.shadowColor = color;
+      ctx.shadowBlur = (priority >= 3 ? 4 : 2) / iconScale;
+      ctx.fillStyle = color;
+      ctx.fill(satellitePath);
+      ctx.strokeStyle = "rgba(9, 9, 11, 0.82)"; // zinc-950
+      ctx.lineWidth = 1.5 / iconScale;
+      ctx.stroke(satellitePath);
+      ctx.restore();
+
+      ctx.restore();
+
+      const shouldLabel =
+        zoom >= 5.5 &&
+        labels < 40 &&
+        (priority >= 4 || (zoom >= 7 && satellite.group !== "starlink"));
+      if (shouldLabel) {
+        labels += 1;
+        drawLabel(ctx, satellite.name, point.x, point.y, color);
+      }
+    }
+  }, [map]);
+
+  const scheduleDraw = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null;
+      draw();
+    });
+  }, [draw]);
+
+  useEffect(() => {
+    const pane = map.getPane(SATELLITE_PANE) ?? map.createPane(SATELLITE_PANE);
+    pane.style.zIndex = "620";
+    pane.style.pointerEvents = "none";
+
+    const canvas = L.DomUtil.create(
+      "canvas",
+      "leaflet-zoom-animated",
+    ) as HTMLCanvasElement;
+    canvasRef.current = canvas;
+    pane.appendChild(canvas);
+
+    const handlers = {
+      resize: scheduleDraw,
+      move: scheduleDraw,
+      zoom: scheduleDraw,
+      moveend: scheduleDraw,
+      zoomend: scheduleDraw,
+    };
+    map.on(handlers);
+    scheduleDraw();
+
+    return () => {
+      map.off(handlers);
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      canvas.remove();
+      canvasRef.current = null;
+    };
+  }, [map, scheduleDraw]);
+
+  useEffect(() => {
+    scheduleDraw();
+  }, [satellites, scheduleDraw]);
+
+  return null;
+}
+
 function TrackCanvasLayer({
   selectedId,
+  selectedFlight,
   segments,
   routeOriginPos,
   routeDestPos,
   routeOriginLabel,
   routeDestLabel,
   hasValidRoute,
-  selectedTrackStart,
   selectedTrackEnd,
-  layovers,
 }: {
   selectedId: string | null;
+  selectedFlight: Flight | null | undefined;
   segments: TrackRenderSegment[];
   routeOriginPos: [number, number] | null;
   routeDestPos: [number, number] | null;
   routeOriginLabel: string | null;
   routeDestLabel: string | null;
   hasValidRoute: boolean;
-  selectedTrackStart: [number, number] | null;
   selectedTrackEnd: [number, number] | null;
-  layovers: RenderLayover[];
 }) {
   const map = useMap();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -818,10 +1121,9 @@ function TrackCanvasLayer({
     routeOriginLabel,
     routeDestLabel,
     hasValidRoute,
-    selectedTrackStart,
     selectedTrackEnd,
-    layovers,
     selectedId,
+    selectedFlight,
   });
   propsRef.current = {
     segments,
@@ -830,10 +1132,9 @@ function TrackCanvasLayer({
     routeOriginLabel,
     routeDestLabel,
     hasValidRoute,
-    selectedTrackStart,
     selectedTrackEnd,
-    layovers,
     selectedId,
+    selectedFlight,
   };
 
   const draw = useCallback(() => {
@@ -865,22 +1166,23 @@ function TrackCanvasLayer({
       routeOriginLabel: origLabel,
       routeDestLabel: destLabel,
       hasValidRoute: valid,
-      selectedTrackStart: start,
       selectedTrackEnd: end,
-      layovers: lays,
       selectedId: currentId,
+      selectedFlight: currentFlight,
     } = propsRef.current;
 
     if (!currentId) return;
 
     const zoom = map.getZoom();
-    const trackWidth = zoom >= 7 ? 4.8 : zoom >= 5 ? 4.1 : 3.4;
+    const trackWidth = zoom >= 7 ? 4.2 : zoom >= 5 ? 3.6 : 3;
 
     const drawRouteArc = (
       p1: [number, number] | null,
       p2: [number, number] | null,
       alpha: number,
       dashed = true,
+      color: string = MAP_COLORS.routeDash,
+      width = 2,
     ) => {
       if (!p1 || !p2) return;
       const pts = calculateGreatCirclePoints(p1, p2, zoom >= 5 ? 96 : 56);
@@ -896,9 +1198,9 @@ function TrackCanvasLayer({
         else ctx.lineTo(p.x, p.y);
         previous = p;
       }
-      ctx.strokeStyle = MAP_COLORS.routeDash;
-      ctx.globalAlpha = alpha * 0.16;
-      ctx.lineWidth = 18;
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = alpha * 0.08;
+      ctx.lineWidth = width + 8;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.stroke();
@@ -914,17 +1216,18 @@ function TrackCanvasLayer({
         else ctx.lineTo(p.x, p.y);
         previous = p;
       }
-      ctx.strokeStyle = MAP_COLORS.routeDash;
+      ctx.strokeStyle = color;
       ctx.globalAlpha = alpha;
-      ctx.lineWidth = 2.1;
+      ctx.lineWidth = width;
       ctx.lineCap = "round";
-      if (dashed) ctx.setLineDash([7, 6]);
+      if (dashed) ctx.setLineDash([10, 10]);
       ctx.stroke();
       ctx.restore();
     };
 
-    const drawTrackPath = (points: FlightTrackPoint[], width: number, color: string) => {
+    const drawTrackPath = (points: FlightTrackPoint[], width: number, color: string, alpha = 1) => {
       if (points.length < 2) return;
+      ctx.save();
       ctx.beginPath();
       let previous = map.latLngToContainerPoint([points[0].lat, points[0].lon]);
       ctx.moveTo(previous.x, previous.y);
@@ -936,80 +1239,69 @@ function TrackCanvasLayer({
       }
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
+      ctx.globalAlpha = alpha;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.stroke();
-    };
-
-    const drawDirectionArrow = (from: L.Point, to: L.Point, color: string, alpha: number) => {
-      const distance = from.distanceTo(to);
-      if (distance < 18) return;
-      const angle = Math.atan2(to.y - from.y, to.x - from.x);
-      const sizePx = zoom >= 6 ? 7 : 5.5;
-      ctx.save();
-      ctx.translate(to.x, to.y);
-      ctx.rotate(angle);
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = color;
-      ctx.strokeStyle = "rgba(2, 6, 23, 0.8)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(sizePx, 0);
-      ctx.lineTo(-sizePx * 0.6, -sizePx * 0.55);
-      ctx.lineTo(-sizePx * 0.25, 0);
-      ctx.lineTo(-sizePx * 0.6, sizePx * 0.55);
-      ctx.closePath();
-      ctx.fill();
       ctx.stroke();
       ctx.restore();
     };
 
-    if (valid) {
-      if (currentSegments.length === 0) {
-        drawRouteArc(orig, dest, 0.48);
+    const pointFromPosition = (
+      pos: [number, number],
+      template?: FlightTrackPoint | null,
+    ): FlightTrackPoint => ({
+      lat: pos[0],
+      lon: pos[1],
+      alt: template?.alt ?? null,
+      speed: template?.speed ?? null,
+      heading: template?.heading ?? null,
+      time: template?.time ?? new Date().toISOString(),
+      onGround: template?.onGround ?? false,
+      dataSource: template?.dataSource ?? "route",
+    });
+
+    const predictedLivePoint = currentFlight
+      ? livePointFromPredictedFlight(
+        currentFlight,
+        predictFlightState(currentFlight, Date.now() / 1000),
+      )
+      : null;
+    const dynamicEnd: [number, number] | null = predictedLivePoint
+      ? [predictedLivePoint.lat, predictedLivePoint.lon]
+      : end;
+
+    if (valid && orig && dest) {
+      if (currentSegments.length > 0 && dynamicEnd && !positionsAreNear(dynamicEnd, dest)) {
+        drawRouteArc(dynamicEnd, dest, 0.48, true, MAP_COLORS.routeDash, 2.4);
       } else {
-        drawRouteArc(orig, start, 0.5);
-        drawRouteArc(end, dest, 0.34);
+        drawRouteArc(orig, dest, 0.34, true, MAP_COLORS.routeDash, 2.2);
       }
     }
 
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    for (const segment of currentSegments) {
-      if (segment.points.length < 2) continue;
-      ctx.globalAlpha = 0.55;
-      drawTrackPath(segment.points, trackWidth + 5.2, MAP_COLORS.trackHalo);
+    const visualTrackPoints = currentSegments.flatMap((segment) => segment.points);
+
+    if (!valid) {
+      return;
     }
 
-    ctx.globalAlpha = 0.95;
-    for (const segment of currentSegments) {
-      if (segment.points.length < 2) continue;
-      let prevPt = segment.points[0];
-      let prevP = map.latLngToContainerPoint([prevPt.lat, prevPt.lon]);
-      let arrowAccumulator = 0;
-      for (let i = 1; i < segment.points.length; i++) {
-        const pt = segment.points[i];
-        const p = map.latLngToContainerPoint([pt.lat, pt.lon]);
-        if (Math.abs(p.x - prevP.x) <= size.x * 1.5) {
-          ctx.beginPath();
-          ctx.moveTo(prevP.x, prevP.y);
-          ctx.lineTo(p.x, p.y);
-          ctx.strokeStyle = trackPointColor(prevPt);
-          ctx.lineWidth = trackWidth;
-          ctx.lineCap = "round";
-          ctx.stroke();
-
-          arrowAccumulator += prevP.distanceTo(p);
-          if (arrowAccumulator > (zoom >= 6 ? 150 : 230)) {
-            drawDirectionArrow(prevP, p, trackPointColor(pt), zoom >= 6 ? 0.82 : 0.62);
-            arrowAccumulator = 0;
-          }
-        }
-        prevPt = pt;
-        prevP = p;
+    if (valid && orig) {
+      const firstPoint = visualTrackPoints[0] ?? predictedLivePoint ?? null;
+      if (firstPoint) {
+        visualTrackPoints.unshift(pointFromPosition(orig, firstPoint));
       }
     }
-    ctx.globalAlpha = 1;
+
+    const lastPoint = visualTrackPoints[visualTrackPoints.length - 1] ?? null;
+    if (predictedLivePoint) {
+      if (!lastPoint || trackDistanceKm(lastPoint, predictedLivePoint) >= 0.02) {
+        visualTrackPoints.push(predictedLivePoint);
+      }
+    }
+
+    if (visualTrackPoints.length >= 2) {
+      drawTrackPath(visualTrackPoints, trackWidth + 4.8, MAP_COLORS.trackHalo, 0.62);
+      drawTrackPath(visualTrackPoints, trackWidth, MAP_COLORS.trackCore, 0.96);
+    }
 
     const drawMarker = (
       pos: [number, number],
@@ -1020,35 +1312,25 @@ function TrackCanvasLayer({
     ) => {
       const p = map.latLngToContainerPoint(pos);
       ctx.save();
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 8;
+      ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-      ctx.fillStyle = fill;
       ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
       ctx.stroke();
       ctx.restore();
       if (label && zoom >= 4) drawLabel(ctx, label, p.x, p.y, color);
     };
 
     if (valid && orig) {
-      drawMarker(orig, MAP_COLORS.routeEndpoint, MAP_COLORS.trackHalo, 4.8, origLabel);
+      drawMarker(orig, "#facc15", "rgba(9, 9, 11, 0.9)", 4, origLabel);
     }
     if (valid && dest) {
-      drawMarker(dest, MAP_COLORS.routeEndpoint, MAP_COLORS.routeDash, 4.8, destLabel);
+      drawMarker(dest, "#facc15", "rgba(9, 9, 11, 0.9)", 4, destLabel);
     }
-
-    if (lays) {
-      for (const l of lays) {
-        drawMarker([l.lat, l.lon], "#fbbf24", "#0f172a", 5.2, l.label);
-      }
-    }
-
-    if (start) drawMarker(start, MAP_COLORS.trackCore, MAP_COLORS.trackHalo, 4.5, "START");
-    if (end) drawMarker(end, MAP_COLORS.trackGlow, MAP_COLORS.trackCurrent, 5.8, "LIVE");
   }, [map]);
 
   const scheduleDraw = useCallback(() => {
@@ -1066,11 +1348,12 @@ function TrackCanvasLayer({
 
     const canvas = L.DomUtil.create(
       "canvas",
-      "sw-track-canvas leaflet-zoom-animated",
+      "leaflet-zoom-animated",
     ) as HTMLCanvasElement;
     canvasRef.current = canvas;
     pane.appendChild(canvas);
 
+    const intervalId = window.setInterval(scheduleDraw, FLIGHT_PREDICTION_REDRAW_MS);
     const handlers = {
       resize: scheduleDraw,
       move: scheduleDraw,
@@ -1085,6 +1368,7 @@ function TrackCanvasLayer({
         window.cancelAnimationFrame(frameRef.current);
         frameRef.current = null;
       }
+      window.clearInterval(intervalId);
       canvas.remove();
       canvasRef.current = null;
     };
@@ -1099,10 +1383,9 @@ function TrackCanvasLayer({
     routeOriginLabel,
     routeDestLabel,
     hasValidRoute,
-    selectedTrackStart,
     selectedTrackEnd,
-    layovers,
     selectedId,
+    selectedFlight,
     scheduleDraw,
   ]);
 
@@ -1167,12 +1450,12 @@ function airportColor(airport: Airport): string {
 }
 
 function airportRadius(airport: Airport, zoom: number): number {
-  const base = zoom < 3 ? 1.4 : zoom < 5 ? 1.8 : zoom < 7 ? 2.2 : zoom < 9 ? 2.8 : 3.4;
-  if (airport.type === "large_airport") return base + 1.8;
-  if (airport.type === "medium_airport") return base + 1.2;
-  if (airport.scheduledService) return base + 0.6;
-  if (airport.type === "closed_airport") return Math.max(1, base - 0.6);
-  return base;
+  const base = zoom < 4 ? 6.5 : zoom < 6 ? 7.5 : zoom < 8 ? 8.5 : zoom < 10 ? 10.0 : 11.5;
+  if (airport.type === "large_airport") return base + 3.0;
+  if (airport.type === "medium_airport") return base + 1.5;
+  if (airport.scheduledService) return base + 0.5;
+  if (airport.type === "closed_airport") return Math.max(3, base - 2.5);
+  return base - 0.5; // small_airport, etc.
 }
 
 function shouldLabelAirport(airport: Airport, zoom: number): boolean {
@@ -1205,114 +1488,108 @@ function drawAirport(
 
   ctx.save();
   ctx.globalAlpha = selected
-    ? 0.92
+    ? 0.98
     : isRouteNode
-      ? 0.8
+      ? 0.9
       : airport.type === "closed_airport"
-        ? 0.12
+        ? 0.28
         : important
-          ? 0.4
-          : 0.25;
+          ? 0.72
+          : 0.58;
 
   const color = isRouteNode ? MAP_COLORS.routeEndpoint : airportColor(airport);
   const radius = airportRadius(airport, zoom);
-  const size = selected ? radius + 3 : isRouteNode ? radius + 2 : radius;
+  const size = selected ? radius + 3 : isRouteNode ? radius + 1.5 : radius;
 
   ctx.translate(point.x, point.y);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  // Selection / route highlight ring
+  // 1. Draw outer selection ring / glow
   if (selected || isRouteNode) {
     ctx.beginPath();
-    ctx.arc(0, 0, size + 4, 0, Math.PI * 2);
+    ctx.arc(0, 0, size + 4.5, 0, Math.PI * 2);
     ctx.strokeStyle = selected ? MAP_COLORS.selectedAircraft : MAP_COLORS.routeEndpoint;
-    ctx.lineWidth = selected ? 1.6 : 1.2;
-    ctx.globalAlpha = selected ? 0.7 : 0.5;
+    ctx.lineWidth = selected ? 2.0 : 1.5;
+    ctx.globalAlpha = selected ? 0.75 : 0.55;
     ctx.stroke();
-    ctx.globalAlpha = selected ? 0.92 : 0.8;
+
+    // Add subtle outer glow shadow for selected nodes
+    if (selected) {
+      ctx.shadowColor = MAP_COLORS.selectedAircraft;
+      ctx.shadowBlur = 8;
+    }
+
+    ctx.globalAlpha = selected ? 0.98 : 0.9;
   }
 
-  if (airport.type === "heliport") {
-    // Circled H — standard aviation heliport symbol
-    const r = Math.max(4, size * 1.1);
+  // 2. Draw base circle
+  ctx.beginPath();
+  ctx.arc(0, 0, size, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(9, 9, 11, 0.85)";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Reset shadow for inner icons
+  ctx.shadowBlur = 0;
+
+  // 3. Draw white icon on top of the circle
+  if (airport.type === "closed_airport") {
+    // Draw white 'X'
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = size >= 8 ? 2.0 : 1.4;
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(0,0,0,0.5)";
-    ctx.lineWidth = 2.4;
+    const offset = size * 0.42;
+    ctx.moveTo(-offset, -offset);
+    ctx.lineTo(offset, offset);
+    ctx.moveTo(offset, -offset);
+    ctx.lineTo(-offset, offset);
     ctx.stroke();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = selected ? 1.4 : 0.9;
-    ctx.stroke();
-    if (zoom >= 6) {
-      const h = r * 0.52;
-      ctx.beginPath();
-      ctx.moveTo(-h, -h);
-      ctx.lineTo(-h, h);
-      ctx.moveTo(h, -h);
-      ctx.lineTo(h, h);
-      ctx.moveTo(-h, 0);
-      ctx.lineTo(h, 0);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = selected ? 1.3 : 0.85;
-      ctx.stroke();
-    }
-  } else if (airport.type === "seaplane_base") {
-    // Anchor-like diamond with wave
-    const d = Math.max(3.5, size * 1.0);
-    ctx.beginPath();
-    ctx.moveTo(0, -d);
-    ctx.lineTo(d, 0);
-    ctx.lineTo(0, d);
-    ctx.lineTo(-d, 0);
-    ctx.closePath();
-    ctx.strokeStyle = "rgba(0,0,0,0.45)";
-    ctx.lineWidth = 2.2;
-    ctx.stroke();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = selected ? 1.3 : 0.8;
-    ctx.stroke();
-    if (zoom >= 7) {
-      ctx.beginPath();
-      const w = d * 0.8;
-      ctx.moveTo(-w, d + 2.5);
-      ctx.quadraticCurveTo(-w * 0.5, d + 1, 0, d + 2.5);
-      ctx.quadraticCurveTo(w * 0.5, d + 4, w, d + 2.5);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 0.7;
-      ctx.stroke();
-    }
-  } else if (important) {
-    // Runway crosshair — standard aviation airport symbol
-    const runway = Math.max(4, size * 1.4);
-    const cross = Math.max(2.5, size * 0.55);
-    ctx.beginPath();
-    ctx.moveTo(0, -runway);
-    ctx.lineTo(0, runway);
-    ctx.moveTo(-cross, 0);
-    ctx.lineTo(cross, 0);
-    ctx.strokeStyle = "rgba(0,0,0,0.45)";
-    ctx.lineWidth = selected ? 3.2 : 2.4;
-    ctx.stroke();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = selected ? 1.4 : 0.9;
-    ctx.stroke();
-    // Center dot
-    ctx.beginPath();
-    ctx.arc(0, 0, selected ? 2 : 1.3, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
+  } else if (airport.type === "heliport") {
+    // Draw white 'H'
+    ctx.fillStyle = "#ffffff";
+    const fontSize = Math.max(7, Math.round(size * 1.1));
+    ctx.font = `800 ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("H", 0, 0);
   } else {
-    // Simple dot for small/other airports
-    const r = Math.max(1.5, size * 0.65);
+    // Draw airplane silhouette
+    ctx.save();
+    ctx.fillStyle = "#ffffff";
+    // Rotate 45 degrees for northeast direction (airport symbol standard)
+    ctx.rotate(45 * Math.PI / 180);
+
+    // Plane path scale based on size
+    const s = size * 0.55;
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    ctx.moveTo(0, -s);
+    ctx.lineTo(s * 0.15, -s * 0.7);
+    ctx.lineTo(s * 0.15, -s * 0.2);
+    // Wings
+    ctx.lineTo(s * 0.85, s * 0.15);
+    ctx.lineTo(s * 0.85, s * 0.35);
+    ctx.lineTo(s * 0.15, s * 0.15);
+    // Tail fuselage
+    ctx.lineTo(s * 0.15, s * 0.65);
+    // Tail wing
+    ctx.lineTo(s * 0.45, s * 0.85);
+    ctx.lineTo(s * 0.45, s * 0.95);
+    ctx.lineTo(0, s * 0.8);
+    ctx.lineTo(-s * 0.45, s * 0.95);
+    ctx.lineTo(-s * 0.45, s * 0.85);
+    ctx.lineTo(-s * 0.15, s * 0.65);
+    // Left wing
+    ctx.lineTo(-s * 0.15, s * 0.15);
+    ctx.lineTo(-s * 0.85, s * 0.35);
+    ctx.lineTo(-s * 0.85, s * 0.15);
+    ctx.lineTo(-s * 0.15, -s * 0.2);
+    ctx.lineTo(-s * 0.15, -s * 0.7);
+    ctx.closePath();
     ctx.fill();
-    ctx.beginPath();
-    ctx.arc(0, 0, r - 0.5, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
+    ctx.restore();
   }
 
   ctx.restore();
@@ -1437,12 +1714,12 @@ function AirportCanvasLayer({
 
   useEffect(() => {
     const airportPane = map.getPane("airportCanvasPane") ?? map.createPane("airportCanvasPane");
-    airportPane.style.zIndex = "640";
+    airportPane.style.zIndex = "390";
     airportPane.style.pointerEvents = "none";
 
     const canvas = L.DomUtil.create(
       "canvas",
-      "sw-airport-canvas leaflet-zoom-animated",
+      "leaflet-zoom-animated",
     ) as HTMLCanvasElement;
     canvasRef.current = canvas;
     airportPane.appendChild(canvas);
@@ -1484,7 +1761,822 @@ function AirportCanvasLayer({
   return null;
 }
 
-import MapLegend from "./MapLegend";
+function MapToolbar({
+  predictions,
+  weather,
+  tfr,
+  satellites,
+  clustering,
+  airports,
+  weatherLoading,
+  tfrLoading,
+  onTogglePredictions,
+  onToggleWeather,
+  onToggleTfr,
+  onToggleSatellites,
+  onToggleClustering,
+  onToggleAirports,
+}: {
+  predictions: boolean;
+  weather: boolean;
+  tfr: boolean;
+  satellites: boolean;
+  clustering: boolean;
+  airports: boolean;
+  weatherLoading?: boolean;
+  tfrLoading?: boolean;
+  onTogglePredictions: () => void;
+  onToggleWeather: () => void;
+  onToggleTfr: () => void;
+  onToggleSatellites: () => void;
+  onToggleClustering: () => void;
+  onToggleAirports: () => void;
+}) {
+  return (
+    <div className="sw-map-toolbar absolute top-[165px] left-3 z-[1000] flex flex-col gap-1.5 bg-zinc-950/80 backdrop-blur-xl border border-white/10 p-1.5 rounded-xl shadow-xl">
+      <button
+        type="button"
+        className={`p-2 rounded-lg transition-colors ${predictions ? "bg-blue-500/20 text-blue-400" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+        onClick={onTogglePredictions}
+        title="Toggle predicted paths"
+      >
+        <Navigation2 className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        className={`p-2 rounded-lg transition-colors ${weather ? "bg-blue-500/20 text-blue-400" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+        onClick={onToggleWeather}
+        title="Toggle weather layer"
+      >
+        {weatherLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+        ) : (
+          <CloudSun className="w-4 h-4" />
+        )}
+      </button>
+      <button
+        type="button"
+        className={`p-2 rounded-lg transition-colors ${tfr ? "bg-blue-500/20 text-blue-400" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+        onClick={onToggleTfr}
+        title="Toggle TFR layer"
+      >
+        {tfrLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+        ) : (
+          <ShieldAlert className="w-4 h-4" />
+        )}
+      </button>
+      <button
+        type="button"
+        className={`p-2 rounded-lg transition-colors ${satellites ? "bg-blue-500/20 text-blue-400" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+        onClick={onToggleSatellites}
+        title="Toggle satellite layer"
+      >
+        <Satellite className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        className={`p-2 rounded-lg transition-colors ${airports ? "bg-blue-500/20 text-blue-400" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+        onClick={onToggleAirports}
+        title="Toggle airport layer"
+      >
+        <Plane className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        className={`p-2 rounded-lg transition-colors ${clustering ? "bg-blue-500/20 text-blue-400" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+        onClick={onToggleClustering}
+        title="Toggle clustering"
+      >
+        <Hash className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+function MapKeyboardBridge({
+  onTogglePredictions,
+  onToggleWeather,
+  onToggleTfr,
+  onToggleSatellites,
+  onToggleClustering,
+  onToggleAirports,
+}: {
+  onTogglePredictions: () => void;
+  onToggleWeather: () => void;
+  onToggleTfr: () => void;
+  onToggleSatellites: () => void;
+  onToggleClustering: () => void;
+  onToggleAirports: () => void;
+}) {
+  const map = useMap();
+  useEffect(() => {
+    const setZoom = (event: Event) => {
+      const zoom = (event as CustomEvent<number>).detail;
+      if (typeof zoom === "number") map.setZoom(zoom);
+    };
+    const togglePredictions = () => onTogglePredictions();
+    const toggleWeather = () => onToggleWeather();
+    const toggleTfr = () => onToggleTfr();
+    const toggleSatellites = () => onToggleSatellites();
+    const toggleClustering = () => onToggleClustering();
+    const toggleAirports = () => onToggleAirports();
+    const focusLayers = () => {
+      document.querySelector<HTMLButtonElement>(".sw-map-toolbar button")?.focus();
+    };
+    window.addEventListener("skywatch:set-map-zoom", setZoom);
+    window.addEventListener("skywatch:toggle-predictions", togglePredictions);
+    window.addEventListener("skywatch:toggle-weather", toggleWeather);
+    window.addEventListener("skywatch:toggle-tfr", toggleTfr);
+    window.addEventListener("skywatch:toggle-satellites", toggleSatellites);
+    window.addEventListener("skywatch:toggle-clustering", toggleClustering);
+    window.addEventListener("skywatch:toggle-airports", toggleAirports);
+    window.addEventListener("skywatch:toggle-map-layers", focusLayers);
+    return () => {
+      window.removeEventListener("skywatch:set-map-zoom", setZoom);
+      window.removeEventListener("skywatch:toggle-predictions", togglePredictions);
+      window.removeEventListener("skywatch:toggle-weather", toggleWeather);
+      window.removeEventListener("skywatch:toggle-tfr", toggleTfr);
+      window.removeEventListener("skywatch:toggle-satellites", toggleSatellites);
+      window.removeEventListener("skywatch:toggle-clustering", toggleClustering);
+      window.removeEventListener("skywatch:toggle-airports", toggleAirports);
+      window.removeEventListener("skywatch:toggle-map-layers", focusLayers);
+    };
+  }, [map, onTogglePredictions, onToggleSatellites, onToggleTfr, onToggleWeather, onToggleClustering, onToggleAirports]);
+  return null;
+}
+
+const PREDICTION_EARTH_RADIUS_M = 6_371_000;
+
+function projectedPosition(
+  latitude: number,
+  longitude: number,
+  bearingDegrees: number,
+  distanceMeters: number,
+): [number, number] {
+  const bearing = (bearingDegrees * Math.PI) / 180;
+  const lat1 = (latitude * Math.PI) / 180;
+  const lon1 = (longitude * Math.PI) / 180;
+  const angularDistance = distanceMeters / PREDICTION_EARTH_RADIUS_M;
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angularDistance) +
+    Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing),
+  );
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+      Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2),
+    );
+
+  return [
+    (lat2 * 180) / Math.PI,
+    normalizeLongitude((lon2 * 180) / Math.PI),
+  ];
+}
+
+function predictionPathForFlight(flight: Flight): { positions: [number, number][]; confidence: number } {
+  const path = flight.predicted_path ?? [];
+  const positions = path
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon))
+    .map((point) => [point.lat, point.lon] as [number, number]);
+  if (positions.length >= 2) {
+    return {
+      positions,
+      confidence: flight.prediction_confidence ?? path[path.length - 1]?.confidence ?? 0.5,
+    };
+  }
+
+  if (
+    flight.on_ground ||
+    flight.latitude === null ||
+    flight.longitude === null ||
+    flight.velocity === null ||
+    flight.true_track === null ||
+    flight.velocity < 8
+  ) {
+    return { positions: [], confidence: 0 };
+  }
+
+  const seconds = [0, 90, 180, 300];
+  return {
+    positions: seconds.map((step) =>
+      step === 0
+        ? [flight.latitude as number, flight.longitude as number]
+        : projectedPosition(
+          flight.latitude as number,
+          flight.longitude as number,
+          flight.true_track as number,
+          (flight.velocity as number) * step,
+        ),
+    ),
+    confidence: 0.38,
+  };
+}
+
+function PredictedPathLayer({ flights, enabled }: { flights: Flight[]; enabled: boolean }) {
+  if (!enabled) return null;
+  return (
+    <>
+      {flights.slice(0, 180).map((flight) => {
+        const { positions, confidence } = predictionPathForFlight(flight);
+        if (positions.length < 2) return null;
+        return (
+          <Polyline
+            key={`prediction-${flight.icao24}`}
+            positions={positions}
+            pathOptions={{
+              color: "#f59e0b",
+              opacity: Math.max(0.18, Math.min(0.82, confidence)),
+              dashArray: "6 8",
+              weight: selectedWeight(flight),
+            }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function selectedWeight(flight: Flight): number {
+  return flight.prediction_confidence && flight.prediction_confidence > 0.8 ? 2.4 : 1.6;
+}
+
+function weatherColor(category: string): string {
+  if (category === "MVFR") return "#3b82f6";
+  if (category === "IFR") return "#ef4444";
+  if (category === "LIFR") return "#d946ef";
+  return "#22c55e";
+}
+
+function getWeatherCategoryConfig(category: string) {
+  const cat = (category || "").toUpperCase();
+  if (cat === "VFR") {
+    return {
+      icon: Sun,
+      label: "VFR",
+      description: "Visual Flight Rules",
+      colorClass: "text-emerald-400 border-emerald-500/20 bg-emerald-500/10",
+      badgeColor: "#10b981",
+    };
+  }
+  if (cat === "MVFR") {
+    return {
+      icon: CloudSun,
+      label: "MVFR",
+      description: "Marginal VFR",
+      colorClass: "text-blue-400 border-blue-500/20 bg-blue-500/10",
+      badgeColor: "#3b82f6",
+    };
+  }
+  if (cat === "IFR") {
+    return {
+      icon: Cloud,
+      label: "IFR",
+      description: "Instrument Flight Rules",
+      colorClass: "text-rose-400 border-rose-500/20 bg-rose-500/10",
+      badgeColor: "#ef4444",
+    };
+  }
+  if (cat === "LIFR") {
+    return {
+      icon: CloudLightning,
+      label: "LIFR",
+      description: "Low IFR",
+      colorClass: "text-fuchsia-400 border-fuchsia-500/20 bg-fuchsia-500/10",
+      badgeColor: "#d946ef",
+    };
+  }
+  return {
+    icon: CloudSun,
+    label: cat || "UNK",
+    description: "Unknown",
+    colorClass: "text-zinc-400 border-zinc-500/20 bg-zinc-500/10",
+    badgeColor: "#71717a",
+  };
+}
+
+function getWeatherCategorySvg(category: string): string {
+  const cat = (category || "").toUpperCase();
+  if (cat === "VFR") {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 filter drop-shadow-[0_0_1px_rgba(16,185,129,0.5)]"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
+  }
+  if (cat === "MVFR") {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 filter drop-shadow-[0_0_1px_rgba(59,130,246,0.5)]"><path d="M12 2v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="M20 12h2"/><path d="m19.07 4.93-1.41 1.41"/><path d="M15.9 10.1A4 4 0 0 0 12 6"/><path d="M18.5 19a3.5 3.5 0 0 0 0-7c-.12 0-.23 0-.35.02a6 6 0 0 0-11.65 0 4.6 4.6 0 0 0-.25-.02A4.5 4.5 0 0 0 1.75 16.5 4.5 4.5 0 0 0 6.25 21h10.75a3.5 3.5 0 0 0 1.5-3Z"/></svg>`;
+  }
+  if (cat === "IFR") {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 filter drop-shadow-[0_0_1px_rgba(239,68,68,0.5)]"><path d="M17.5 19a3.5 3.5 0 0 0 .5-6.975 6 6 0 0 0-11.95 0A4.6 4.6 0 0 0 2 15.75 4.75 4.75 0 0 0 6.75 20.5h10.75a3.5 3.5 0 0 0 0-7Z"/></svg>`;
+  }
+  if (cat === "LIFR") {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#d946ef" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 filter drop-shadow-[0_0_1px_rgba(217,70,239,0.5)]"><path d="M17.5 19a3.5 3.5 0 0 0 .5-6.975 6 6 0 0 0-11.95 0A4.6 4.6 0 0 0 2 15.75 4.75 4.75 0 0 0 6.75 20.5h10.75a3.5 3.5 0 0 0 0-7Z"/><path d="m13 16-3 4h3l-1 4 4-5h-3l1-3Z"/></svg>`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 2v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="M20 12h2"/><path d="m19.07 4.93-1.41 1.41"/><path d="M15.9 10.1A4 4 0 0 0 12 6"/><path d="M18.5 19a3.5 3.5 0 0 0 0-7c-.12 0-.23 0-.35.02a6 6 0 0 0-11.65 0 4.6 4.6 0 0 0-.25-.02A4.5 4.5 0 0 0 1.75 16.5 4.5 4.5 0 0 0 6.25 21h10.75a3.5 3.5 0 0 0 1.5-3Z"/></svg>`;
+}
+
+function WeatherLayer({
+  airports,
+  enabled,
+  setLoading,
+}: {
+  airports: Airport[];
+  enabled: boolean;
+  setLoading: (loading: boolean) => void;
+}) {
+  const map = useMap();
+  const [weather, setWeather] = useState<Record<string, WeatherMetar>>({});
+  const airportIndex = useMemo(() => buildAirportIndex(airports), [airports]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+    let timer: number | null = null;
+    let cancelled = false;
+
+    const load = () => {
+      setLoading(true);
+      const visible = getAirportCandidates(airportIndex, map.getBounds().pad(0.1), map.getZoom())
+        .filter((airport) => airport.type === "large_airport" || airport.type === "medium_airport")
+        .slice(0, 50);
+      const codes = visible
+        .map((airport) => airport.icao || airport.gpsCode || airport.ident)
+        .filter((c): c is string => Boolean(c) && /^[A-Z]{4}$/.test(c));
+      if (codes.length === 0) {
+        setLoading(false);
+        return;
+      }
+      void fetchBackendJson<WeatherPayload>(`/api/v1/weather/metar/?airports=${codes.join(",")}`)
+        .then((data) => {
+          if (!cancelled) setWeather(data.weather || {});
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    // Load instantly when layer is first enabled
+    load();
+
+    const schedule = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(load, 500);
+    };
+    map.on("moveend zoomend", schedule);
+    return () => {
+      cancelled = true;
+      map.off("moveend zoomend", schedule);
+      if (timer !== null) window.clearTimeout(timer);
+      setLoading(false);
+    };
+  }, [airportIndex, enabled, map, setLoading]);
+
+  if (!enabled) return null;
+  return (
+    <>
+      {airports.map((airport) => {
+        const code = airport.icao || airport.gpsCode || airport.ident;
+        const item = code ? weather[code] : undefined;
+        if (!item) return null;
+        const catConfig = getWeatherCategoryConfig(item.flight_category);
+        const catSvg = getWeatherCategorySvg(item.flight_category);
+
+        const icon = L.divIcon({
+          className: "bg-transparent border-0",
+          html: `<div class="flex items-center justify-center w-6 h-6 rounded-full bg-zinc-950/80 border border-white/10 hover:scale-110 hover:bg-zinc-900 transition-all duration-150 shadow-sm cursor-pointer">${catSvg}</div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+          popupAnchor: [0, -12],
+        });
+
+        return (
+          <Marker
+            key={`weather-${code}`}
+            position={[airport.lat, airport.lon]}
+            icon={icon}
+          >
+            <Popup className="bg-transparent border-0 shadow-none m-0 p-0">
+              <div className="flex flex-col min-w-[280px] max-w-[340px] text-zinc-200 bg-zinc-950/95 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl font-sans text-xs select-none">
+                <div className="flex flex-col gap-1 border-b border-white/5 pb-3 mb-3">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-baseline gap-2 min-w-0">
+                      <strong className="text-base font-bold text-white tracking-tight leading-none font-mono">
+                        {code}
+                      </strong>
+                      <span className="text-[10px] text-zinc-400 font-medium truncate">
+                        {airport.city ? `${airport.city}, ${airport.countryCode}` : airport.country}
+                      </span>
+                    </div>
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold tracking-wider border ${catConfig.colorClass}`}
+                    >
+                      <catConfig.icon className="w-3.5 h-3.5 flex-shrink-0" />
+                      {catConfig.label}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 truncate leading-none">
+                    {airport.name}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 mb-3">
+                  {/* Wind Card */}
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2.5 flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 flex-shrink-0">
+                      <Wind className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Wind</span>
+                      <strong className="block text-xs text-zinc-200 truncate mt-0.5 font-mono">
+                        {item.wind_direction !== null ? (
+                          <span className="inline-flex items-center gap-1">
+                            <Navigation2
+                              className="w-2.5 h-2.5 text-blue-400 fill-current"
+                              style={{ transform: `rotate(${item.wind_direction}deg)` }}
+                            />
+                            {item.wind_direction}° / {item.wind_speed ?? 0} kt
+                          </span>
+                        ) : "Calm"}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Temperature Card */}
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2.5 flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-400 flex-shrink-0">
+                      <Thermometer className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Temp</span>
+                      <strong className="block text-xs text-zinc-200 mt-0.5 font-mono">
+                        {item.temperature !== null ? `${item.temperature} °C` : "--"}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Visibility Card */}
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2.5 flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                      <Eye className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Visibility</span>
+                      <strong className="block text-xs text-zinc-200 mt-0.5 font-mono">
+                        {item.visibility !== null ? `${item.visibility} sm` : "--"}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Ceiling Card */}
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2.5 flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-400 flex-shrink-0">
+                      <Cloud className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Ceiling</span>
+                      <strong className="block text-xs text-zinc-200 mt-0.5 font-mono">
+                        {item.ceiling !== null ? `${item.ceiling.toLocaleString()} ft` : "Clear"}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5 border-t border-white/5 pt-3">
+                  <span className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500">Raw METAR</span>
+                  <p className="text-[10px] font-mono text-zinc-400 bg-white/5 p-2 rounded-lg leading-relaxed break-words border border-white/5 select-text">
+                    {item.raw}
+                  </p>
+                </div>
+              </div>
+            </Popup>
+          </Marker>
+        );
+      })}
+    </>
+  );
+}
+
+function TfrLayer({
+  enabled,
+  setLoading,
+}: {
+  enabled: boolean;
+  setLoading: (loading: boolean) => void;
+}) {
+  const [features, setFeatures] = useState<TfrFeature[]>([]);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    let refreshTimer: number | null = null;
+
+    const load = () => {
+      setLoading(true);
+      void fetchBackendJson<TfrPayload>("/api/v1/airspace/restrictions/")
+        .then((payload) => {
+          if (cancelled) return;
+          setFeatures((payload.features || []).filter((feature) => feature.geometry?.coordinates));
+        })
+        .catch(() => {
+          if (!cancelled) setFeatures([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    load();
+    refreshTimer = window.setInterval(load, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      if (refreshTimer !== null) window.clearInterval(refreshTimer);
+      setLoading(false);
+    };
+  }, [enabled, setLoading]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  if (!enabled) return null;
+  return (
+    <>
+      {features.flatMap((feature, index) =>
+        featurePolygons(feature).map((ring, ringIndex) => {
+          const display = restrictionDisplay(feature, nowMs);
+          return (
+            <Polygon
+              key={`restriction-${display.id}-${index}-${ringIndex}`}
+              positions={ring.map((point) => [point[1], point[0]] as [number, number])}
+              pathOptions={{
+                color: display.color,
+                fillColor: display.color,
+                fillOpacity: display.isCritical ? 0.22 : 0.16,
+                dashArray: display.isCritical ? undefined : "6 6",
+                weight: display.isFresh ? 3 : 2,
+                className: display.isFresh ? "sw-restriction-fresh" : undefined,
+              }}
+            >
+              <Tooltip sticky className="bg-zinc-950/95 border border-white/10 text-zinc-200 rounded-xl p-3 shadow-2xl font-sans text-xs">
+                <div className="flex flex-col min-w-[220px] max-w-[300px]">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="flex items-center gap-1.5 min-w-0 font-bold">
+                      <span className={`w-2 h-2 rounded-full ${display.isCritical ? "bg-rose-500" : "bg-amber-500"}`}></span>
+                      <span className={`${display.isCritical ? "text-rose-400" : "text-amber-400"} truncate`}>
+                        {display.riskLabel.toUpperCase()}
+                      </span>
+                    </div>
+                    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${display.sourceType === "backup"
+                        ? "border-zinc-500/40 bg-zinc-500/10 text-zinc-300"
+                        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      }`}>
+                      {display.sourceType === "backup" ? "Backup" : "Live"}
+                    </span>
+                  </div>
+                  <div className="font-semibold text-white text-sm mb-1 leading-snug">{display.name}</div>
+                  <div className="text-[10px] text-zinc-400 mb-2 font-mono leading-relaxed">
+                    LIMITS: {display.altitudeLimits} | AUTH: {display.authority}
+                  </div>
+                  {display.expiresIn ? (
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-sky-300">
+                      {display.expiresIn}
+                    </div>
+                  ) : null}
+                  <div className="text-[11px] text-zinc-300 leading-relaxed border-t border-white/10 pt-2 mt-1">
+                    {display.reason}
+                  </div>
+                  <div className="mt-2 text-[9px] uppercase tracking-wider text-zinc-500">
+                    {display.source}
+                  </div>
+                </div>
+              </Tooltip>
+            </Polygon>
+          );
+        }),
+      )}
+    </>
+  );
+}
+
+function featurePolygons(feature: TfrFeature): number[][][] {
+  const coords = feature.geometry?.coordinates;
+  if (!coords) return [];
+  if (feature.geometry?.type === "MultiPolygon") {
+    return (coords as number[][][][])
+      .map((polygon) => polygon[0])
+      .filter((ring): ring is number[][] => Array.isArray(ring) && ring.length > 2);
+  }
+  return [(coords as number[][][])[0]].filter((ring): ring is number[][] => Array.isArray(ring) && ring.length > 2);
+}
+
+function restrictionDisplay(feature: TfrFeature, nowMs: number) {
+  const props = feature.properties || {};
+  const sourceType = String(propValue(props, ["source_type", "sourceType"], "live")).toLowerCase() === "backup" ? "backup" : "live";
+  const riskLabel = String(propValue(props, ["riskLevel", "risk_level", "severity"], "High Risk (Advisory)"));
+  const reason = compactText(String(propValue(props, ["reason", "qualifier", "REASON", "NOTAM_TXT", "hazard", "type"], "airspace restriction")), 180);
+  const name = compactText(String(propValue(props, ["name", "title", "NOTAM", "notamNumber", "restriction_kind", "type"], "Airspace restriction")), 90);
+  const altitudeLimits = compactText(String(propValue(props, ["altitudeLimits", "altitude_limits", "altitude"], altitudeText(props))), 60);
+  const authority = compactText(String(propValue(props, ["authority", "source"], "Government feed")), 80);
+  const source = compactText(String(propValue(props, ["source"], sourceType === "backup" ? "SkyWatch backup" : "Live government feed")), 90);
+  const isCritical = isCriticalRestriction(riskLabel, reason, name);
+  const issuedAt = parseTimestamp(propValue(props, ["issued_at", "issuedAt", "issueTime", "startTime", "validFrom"], ""));
+  const expiresAt = parseTimestamp(propValue(props, ["expires_at", "expiresAt", "expireTime", "endTime", "validTo"], ""));
+  const expiresIn = formatExpiry(expiresAt, nowMs);
+  const isFresh = Boolean(issuedAt && nowMs - issuedAt.getTime() >= 0 && nowMs - issuedAt.getTime() <= 2 * 60 * 60 * 1000);
+
+  return {
+    id: String(propValue(props, ["id", "notamNumber", "NOTAM"], "unknown")),
+    name,
+    reason,
+    riskLabel,
+    altitudeLimits,
+    authority,
+    source,
+    sourceType,
+    expiresIn,
+    isFresh,
+    isCritical,
+    color: isCritical ? "#ef4444" : "#f59e0b",
+  };
+}
+
+function propValue(props: Record<string, unknown>, keys: string[], fallback: unknown): unknown {
+  for (const key of keys) {
+    if (key in props && props[key] !== null && props[key] !== undefined && props[key] !== "") {
+      return props[key];
+    }
+    const match = Object.keys(props).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+    if (match && props[match] !== null && props[match] !== undefined && props[match] !== "") {
+      return props[match];
+    }
+  }
+  return fallback;
+}
+
+function altitudeText(props: Record<string, unknown>): string {
+  const base = propValue(props, ["base", "altitudeLow1", "ALT_LMT_LO"], "SFC");
+  const top = propValue(props, ["top", "altitudeHi1", "ALT_LMT_HI"], "UNL");
+  return `${base}-${top}`;
+}
+
+function compactText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function isCriticalRestriction(...values: string[]): boolean {
+  const text = values.join(" ").toLowerCase();
+  return ["critical", "no-fly", "no fly", "closed", "closure", "prohibited", "conflict", "missile", "war"].some((term) => text.includes(term));
+}
+
+function parseTimestamp(value: unknown): Date | null {
+  if (!value) return null;
+  if (typeof value === "number") {
+    return new Date(value > 10_000_000_000 ? value : value * 1000);
+  }
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatExpiry(expiresAt: Date | null, nowMs: number): string | null {
+  if (!expiresAt) return null;
+  const diffMs = expiresAt.getTime() - nowMs;
+  if (diffMs <= 0) return "Expired";
+  const totalMinutes = Math.ceil(diffMs / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `Expires in ${days}d ${hours}h`;
+  if (hours > 0) return `Expires in ${hours}h ${minutes}m`;
+  return `Expires in ${minutes}m`;
+}
+
+function PlaybackLayer({ selectedId, enabled, trackData }: { selectedId: string | null; enabled: boolean; trackData: FlightTrackData | null }) {
+  const [positions, setPositions] = useState<PlaybackPosition[]>([]);
+  const [index, setIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+
+  useEffect(() => {
+    if (!enabled || !selectedId || !trackData) {
+      setPositions([]);
+      setIndex(0);
+      setPlaying(false);
+      return;
+    }
+    const allPoints: PlaybackPosition[] = [];
+    for (const segment of trackData.segments) {
+      for (const point of segment.points) {
+        if (Number.isFinite(point.lat) && Number.isFinite(point.lon)) {
+          allPoints.push({
+            timestamp: point.time,
+            latitude: point.lat,
+            longitude: point.lon,
+            altitude: point.alt,
+            velocity: point.speed,
+            heading: point.heading,
+          });
+        }
+      }
+    }
+    allPoints.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    setPositions(allPoints);
+    setIndex(0);
+  }, [enabled, selectedId, trackData]);
+
+  useEffect(() => {
+    if (!playing || positions.length < 2) return;
+    const timer = window.setInterval(
+      () => {
+        setIndex((value) => Math.min(value + 1, positions.length - 1));
+      },
+      Math.max(100, 1000 / speed),
+    );
+    return () => window.clearInterval(timer);
+  }, [playing, positions.length, speed]);
+
+  const controlsRef = useCallback((node: HTMLDivElement | null) => {
+    if (node) {
+      L.DomEvent.disableClickPropagation(node);
+      L.DomEvent.disableScrollPropagation(node);
+    }
+  }, []);
+
+  if (!enabled || positions.length === 0) return null;
+  const current = positions[Math.min(index, positions.length - 1)];
+  const elapsed = positions[0]
+    ? Date.parse(current.timestamp) - Date.parse(positions[0].timestamp)
+    : 0;
+
+  return (
+    <>
+      <CircleMarker
+        center={[current.latitude, current.longitude]}
+        radius={8}
+        pathOptions={{ color: "#f59e0b", fillColor: "#f59e0b", fillOpacity: 0.9 }}
+      />
+      <div ref={controlsRef} className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-4 bg-zinc-950/90 backdrop-blur-xl border border-white/10 px-5 py-3 rounded-full shadow-2xl">
+        <button
+          type="button"
+          onClick={() => setPlaying((value) => !value)}
+          className="flex items-center justify-center w-8 h-8 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+        >
+          {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+        </button>
+        <select
+          value={speed}
+          onChange={(event) => setSpeed(Number(event.target.value))}
+          className="bg-transparent text-xs font-semibold text-zinc-300 outline-none cursor-pointer appearance-none px-1"
+        >
+          {[1, 5, 30].map((value) => (
+            <option key={value} value={value} className="bg-zinc-900">
+              {value}x
+            </option>
+          ))}
+        </select>
+        <input
+          type="range"
+          min={0}
+          max={positions.length - 1}
+          value={index}
+          onChange={(event) => setIndex(Number(event.target.value))}
+          className="w-48 accent-blue-500 cursor-pointer"
+        />
+        <span className="text-xs font-mono font-medium text-zinc-400 min-w-[60px] text-right">
+          {Math.max(0, Math.round(elapsed / 60000)).toLocaleString()} min
+        </span>
+      </div>
+    </>
+  );
+}
+
+function MapResizeObserver() {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    observer.observe(container);
+
+    return () => {
+      observer.unobserve(container);
+      observer.disconnect();
+    };
+  }, [map]);
+
+  return null;
+}
 
 function MapView({
   flights,
@@ -1496,34 +2588,42 @@ function MapView({
   enrichmentRoute,
   selectedFlight = null,
   selectedFlightTrack = null,
+  satellites,
   theme,
 }: MapViewProps) {
   const [selectedAirport, setSelectedAirport] = useState<Airport | null>(null);
+  const [showPredictions, setShowPredictions] = useState(false);
+  const [showWeather, setShowWeather] = useState(false);
+  const [showTfr, setShowTfr] = useState(false);
+  const [showSatellites, setShowSatellites] = useState(true);
+  const [showAirports, setShowAirports] = useState(true);
+  const [showPlayback, setShowPlayback] = useState(false);
+  const [showClustering, setShowClustering] = useState(true);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [tfrLoading, setTfrLoading] = useState(false);
 
   const selectedTrackSegments = useMemo(() => {
-    const segments: TrackRenderSegment[] = selectedFlightTrack
+    const rawSegments: TrackRenderSegment[] = selectedFlightTrack
       ? selectedFlightTrack.segments
-          .map((segment): TrackRenderSegment => {
-            const points = segment.points.filter(
-              (point) => Number.isFinite(point.lat) && Number.isFinite(point.lon),
-            );
-            return {
-              id: segment.id,
-              points,
-              positions: points.map((point) => [point.lat, point.lon] as [number, number]),
-            };
-          })
-          .filter((segment) => segment.positions.length > 0)
+        .map((segment): TrackRenderSegment => {
+          const points = segment.points.filter(
+            (point) => Number.isFinite(point.lat) && Number.isFinite(point.lon),
+          );
+          return {
+            id: segment.id,
+            points,
+            positions: points.map((point) => [point.lat, point.lon] as [number, number]),
+          };
+        })
+        .filter((segment) => segment.positions.length > 0)
       : [];
 
     const livePoint = livePointFromFlight(selectedFlight);
-    if (livePoint && segments.length > 0) {
-      const lastSegment = segments[segments.length - 1];
+    if (livePoint && rawSegments.length > 0) {
+      const lastSegment = rawSegments[rawSegments.length - 1];
       const lastPoint = lastSegment.points[lastSegment.points.length - 1];
-      if (lastPoint && canConnectTrackPoints(lastPoint, livePoint)) {
-        const alreadyCurrent =
-          trackDistanceKm(lastPoint, livePoint) < 0.02 ||
-          trackPointTimeMs(livePoint) <= trackPointTimeMs(lastPoint);
+      if (lastPoint) {
+        const alreadyCurrent = trackDistanceKm(lastPoint, livePoint) < 0.02;
         if (!alreadyCurrent) {
           lastSegment.points = [...lastSegment.points, livePoint];
           lastSegment.positions = [
@@ -1534,14 +2634,16 @@ function MapView({
       }
     }
 
-    return segments.filter((segment) => segment.positions.length > 1);
-  }, [selectedFlight, selectedFlightTrack]);
+    if (livePoint && rawSegments.length === 0) {
+      rawSegments.push({
+        id: "selected-live-point",
+        points: [livePoint],
+        positions: [[livePoint.lat, livePoint.lon]],
+      });
+    }
 
-  const selectedTrackStart = useMemo(() => {
-    const firstSegment = selectedTrackSegments.find((segment) => segment.points.length > 0);
-    const point = firstSegment?.points[0];
-    return point ? ([point.lat, point.lon] as [number, number]) : null;
-  }, [selectedTrackSegments]);
+    return rawSegments.filter((segment) => segment.positions.length > 1);
+  }, [selectedFlight, selectedFlightTrack]);
 
   const selectedTrackEnd = useMemo(() => {
     const segments = selectedTrackSegments.filter((segment) => segment.points.length > 0);
@@ -1566,6 +2668,79 @@ function MapView({
     return [dest.latitude, dest.longitude];
   }, [enrichmentRoute]);
 
+  const isRouteLikelyIncorrect = useMemo(() => {
+    if (!enrichmentRoute || !selectedFlight || selectedFlight.latitude === null || selectedFlight.longitude === null) {
+      return false;
+    }
+
+    const lat = Number(selectedFlight.latitude);
+    const lon = Number(selectedFlight.longitude);
+    const track = selectedFlight.true_track !== null ? Number(selectedFlight.true_track) : null;
+
+    const orig = enrichmentRoute.origin;
+    const dest = enrichmentRoute.destination;
+    if (!orig || !dest) return false;
+
+    const origLat = Number(orig.latitude);
+    const origLon = Number(orig.longitude);
+    const destLat = Number(dest.latitude);
+    const destLon = Number(dest.longitude);
+
+    // Calculate progress-like flown and remaining using direct distances
+    const flown = gcDistanceKm(origLat, origLon, lat, lon);
+    const total = gcDistanceKm(origLat, origLon, destLat, destLon);
+    if (total <= 0) return false;
+    const remaining = gcDistanceKm(lat, lon, destLat, destLon);
+    const pct = (flown / total) * 100;
+
+    // Calculate shortest angle difference
+    const angleDiff = (a: number, b: number) => {
+      const d = Math.abs(a - b) % 360;
+      return d > 180 ? 360 - d : d;
+    };
+
+    // 1. Heading towards origin when close to origin (landing/approaching instead of departing)
+    const distToOrigin = flown;
+    if (distToOrigin < 150 && track !== null) {
+      const brgOrig = gcBearing(lat, lon, origLat, origLon);
+      const diffOrig = angleDiff(track, brgOrig);
+      if (diffOrig < 80) {
+        return true;
+      }
+    }
+
+    // 2. Heading away from destination when far from destination
+    if (remaining > 100 && track !== null) {
+      const brgDest = gcBearing(lat, lon, destLat, destLon);
+      const diffDest = angleDiff(track, brgDest);
+      if (diffDest > 90) {
+        return true;
+      }
+    }
+
+    // 3. Physical flight phase mismatch check (e.g. descending rapidly at the very start of a long route)
+    if (total > 300 && pct < 30) {
+      const vSpeed = selectedFlight.vertical_rate !== null ? Number(selectedFlight.vertical_rate) * 196.85 : 0; // m/s -> fpm
+      const alt = selectedFlight.baro_altitude !== null ? Number(selectedFlight.baro_altitude) * 3.28084 : 0; // m -> ft
+      if (vSpeed < -800 && alt < 18000) {
+        return true;
+      }
+    }
+
+    // 4. Backend reported low confidence override
+    if (enrichmentRoute.routeConfidence === "low") {
+      return true;
+    }
+
+    return false;
+  }, [enrichmentRoute, selectedFlight]);
+
+  const hasValidRoute = !!(
+    enrichmentRoute?.origin &&
+    enrichmentRoute?.destination &&
+    !isRouteLikelyIncorrect
+  );
+
   const routeOriginLabel = useMemo(
     () => routeAirportCode(enrichmentRoute?.origin ?? null),
     [enrichmentRoute],
@@ -1574,12 +2749,6 @@ function MapView({
   const routeDestLabel = useMemo(
     () => routeAirportCode(enrichmentRoute?.destination ?? null),
     [enrichmentRoute],
-  );
-
-  const hasValidRoute = !!(
-    enrichmentRoute?.origin &&
-    enrichmentRoute?.destination &&
-    !(enrichmentRoute.routeConfidence === "low" && enrichmentRoute.routeWarning)
   );
 
   const renderLayovers = useMemo<RenderLayover[]>(() => {
@@ -1637,86 +2806,141 @@ function MapView({
       : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 
   return (
-    <MapContainer
-      center={[20, 0]}
-      zoom={2}
-      minZoom={2}
-      maxZoom={12}
-      worldCopyJump
-      zoomControl={false}
-      preferCanvas
-      style={{ height: "100%", width: "100%" }}
-    >
-      <TileLayer
-        key={theme}
-        url={tileUrl}
-        attribution='&copy; OpenStreetMap &copy; CARTO &middot; OpenSky Network &middot; Airport data <a href="https://ourairports.com/data/" target="_blank" rel="noreferrer">OurAirports</a>'
-        subdomains={["a", "b", "c", "d"]}
-      />
-      <ZoomControl position="topleft" />
-      <FlyTo focus={focus} />
-      <TrackAutoFit selectedId={selectedId} segments={selectedTrackSegments} />
-      <FlightCanvasLayer
-        flights={flights}
-        anomalyMap={anomalyMap}
-        selectedId={selectedId}
-        onSelect={handleFlightSelect}
-      />
-      <AirportCanvasLayer
-        airports={airports}
-        selectedAirport={selectedAirport}
-        onSelectAirport={setSelectedAirport}
-        routeAirports={routeAirports}
-      />
+    <div className="relative w-full h-full overflow-hidden">
+      <MapContainer
+        center={[20, 0]}
+        zoom={2}
+        minZoom={2}
+        maxZoom={12}
+        zoomSnap={0.25}
+        zoomDelta={0.5}
+        wheelPxPerZoomLevel={90}
+        worldCopyJump
+        zoomControl={false}
+        preferCanvas
+        style={{ height: "100%", width: "100%", zIndex: 0 }}
+      >
+        <MapResizeObserver />
+        <TileLayer
+          key={theme}
+          url={tileUrl}
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank" rel="noreferrer">CARTO</a> &middot; <a href="https://opensky-network.org" target="_blank" rel="noreferrer">OpenSky Network</a> &middot; <a href="https://airplanes.live" target="_blank" rel="noreferrer">Airplanes.live</a> &middot; <a href="https://www.adsb.lol" target="_blank" rel="noreferrer">ADSB.lol</a> &middot; <a href="https://celestrak.org" target="_blank" rel="noreferrer">CelesTrak</a> &middot; <a href="https://glidernet.org" target="_blank" rel="noreferrer">OGN</a> &middot; <a href="https://ourairports.com" target="_blank" rel="noreferrer">OurAirports</a>'
+          subdomains={["a", "b", "c", "d"]}
+          detectRetina
+          updateWhenIdle
+          keepBuffer={4}
+        />
+        <ZoomControl position="topleft" />
+        <MapKeyboardBridge
+          onTogglePredictions={() => setShowPredictions((value) => !value)}
+          onToggleWeather={() => setShowWeather((value) => !value)}
+          onToggleTfr={() => setShowTfr((value) => !value)}
+          onToggleSatellites={() => setShowSatellites((value) => !value)}
+          onToggleClustering={() => setShowClustering((value) => !value)}
+          onToggleAirports={() => setShowAirports((value) => !value)}
+        />
+        <FlyTo focus={focus} />
+        <TrackAutoFit selectedId={selectedId} segments={selectedTrackSegments} />
+        <PredictedPathLayer flights={flights} enabled={showPredictions} />
+        <WeatherLayer airports={airports} enabled={showWeather} setLoading={setWeatherLoading} />
+        <TfrLayer enabled={showTfr} setLoading={setTfrLoading} />
+        <PlaybackLayer selectedId={selectedId} enabled={showPlayback} trackData={selectedFlightTrack} />
+        {showSatellites && <SatelliteCanvasLayer satellites={satellites} />}
+        <FlightCanvasLayer
+          flights={flights}
+          anomalyMap={anomalyMap}
+          selectedId={selectedId}
+          onSelect={handleFlightSelect}
+          showClustering={showClustering}
+        />
+        {showAirports && (
+          <AirportCanvasLayer
+            airports={airports}
+            selectedAirport={selectedAirport}
+            onSelectAirport={setSelectedAirport}
+            routeAirports={routeAirports}
+          />
+        )}
 
-      {selectedAirport && (
-        <Popup
-          position={[selectedAirport.lat, selectedAirport.lon]}
-          eventHandlers={{ remove: () => setSelectedAirport(null) }}
-        >
-          <div className="sw-airport-popup">
-            <strong>{selectedAirport.name}</strong>
-            <span>
-              {[selectedAirport.city, selectedAirport.region, selectedAirport.country]
-                .filter(Boolean)
-                .join(", ")}
-            </span>
-            <dl>
-              <div>
-                <dt>Code</dt>
-                <dd>{getAirportCode(selectedAirport)}</dd>
-              </div>
-              <div>
-                <dt>Type</dt>
-                <dd>{getAirportTypeLabel(selectedAirport.type)}</dd>
-              </div>
-              <div>
-                <dt>Country</dt>
-                <dd>{selectedAirport.countryCode || "--"}</dd>
-              </div>
-              <div>
-                <dt>Service</dt>
-                <dd>{selectedAirport.scheduledService ? "Scheduled" : "Unscheduled"}</dd>
-              </div>
-            </dl>
-          </div>
-        </Popup>
+        {selectedAirport && (
+          <Popup
+            position={[selectedAirport.lat, selectedAirport.lon]}
+            eventHandlers={{ remove: () => setSelectedAirport(null) }}
+            className="bg-transparent border-0 shadow-none m-0 p-0"
+          >
+            <div className="flex flex-col min-w-[240px] text-zinc-200 bg-zinc-950 border border-white/10 p-4 rounded-xl shadow-2xl font-sans text-xs">
+              <strong className="text-base text-white mb-0.5 tracking-tight">{selectedAirport.name}</strong>
+              <span className="text-zinc-500 mb-4 leading-tight">
+                {[selectedAirport.city, selectedAirport.region, selectedAirport.country]
+                  .filter(Boolean)
+                  .join(", ")}
+              </span>
+              <dl className="grid grid-cols-2 gap-y-3 gap-x-4 text-[10px] uppercase tracking-wider font-semibold text-zinc-500">
+                <div>
+                  <dt className="mb-1">Code</dt>
+                  <dd className="text-zinc-200 normal-case tracking-normal">{getAirportCode(selectedAirport)}</dd>
+                </div>
+                <div>
+                  <dt className="mb-1">Type</dt>
+                  <dd className="text-zinc-200 normal-case tracking-normal truncate">{getAirportTypeLabel(selectedAirport.type)}</dd>
+                </div>
+                <div>
+                  <dt className="mb-1">Country</dt>
+                  <dd className="text-zinc-200 normal-case tracking-normal">{selectedAirport.countryCode || "--"}</dd>
+                </div>
+                <div>
+                  <dt className="mb-1">Service</dt>
+                  <dd className="text-zinc-200 normal-case tracking-normal">{selectedAirport.scheduledService ? "Scheduled" : "Unscheduled"}</dd>
+                </div>
+              </dl>
+            </div>
+          </Popup>
+        )}
+
+        <TrackCanvasLayer
+          selectedId={selectedId}
+          selectedFlight={selectedFlight}
+          segments={selectedTrackSegments}
+          routeOriginPos={routeOriginPos}
+          routeDestPos={routeDestPos}
+          routeOriginLabel={routeOriginLabel}
+          routeDestLabel={routeDestLabel}
+          hasValidRoute={hasValidRoute}
+          selectedTrackEnd={selectedTrackEnd}
+        />
+      </MapContainer>
+
+      {/* Floating Layer Status Indicator */}
+      {(weatherLoading || tfrLoading) && (
+        <div className="absolute top-4 right-4 z-[1000] flex items-center gap-2 px-3 py-2 bg-zinc-950/80 backdrop-blur-xl border border-white/10 text-xs font-medium text-zinc-200 rounded-xl shadow-2xl transition-all duration-300 animate-in fade-in slide-in-from-top-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+          <span>
+            {weatherLoading && tfrLoading
+              ? "Updating weather & restrictions..."
+              : weatherLoading
+                ? "Loading weather data..."
+                : "Loading airspace restrictions..."}
+          </span>
+        </div>
       )}
 
-      <TrackCanvasLayer
-        selectedId={selectedId}
-        segments={selectedTrackSegments}
-        routeOriginPos={routeOriginPos}
-        routeDestPos={routeDestPos}
-        routeOriginLabel={routeOriginLabel}
-        routeDestLabel={routeDestLabel}
-        hasValidRoute={hasValidRoute}
-        selectedTrackStart={selectedTrackStart}
-        selectedTrackEnd={selectedTrackEnd}
-        layovers={renderLayovers}
+      <MapToolbar
+        predictions={showPredictions}
+        weather={showWeather}
+        tfr={showTfr}
+        satellites={showSatellites}
+        clustering={showClustering}
+        airports={showAirports}
+        weatherLoading={weatherLoading}
+        tfrLoading={tfrLoading}
+        onTogglePredictions={() => setShowPredictions((value) => !value)}
+        onToggleWeather={() => setShowWeather((value) => !value)}
+        onToggleTfr={() => setShowTfr((value) => !value)}
+        onToggleSatellites={() => setShowSatellites((value) => !value)}
+        onToggleClustering={() => setShowClustering((value) => !value)}
+        onToggleAirports={() => setShowAirports((value) => !value)}
       />
-      <MapLegend flights={flights} />
-    </MapContainer>
+    </div>
   );
 }
 

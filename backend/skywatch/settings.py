@@ -1,6 +1,9 @@
 """Django settings for the SkyWatch backend."""
 
 import os
+import importlib.util
+import socket
+import warnings
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -23,6 +26,31 @@ def env_list(name: str, default: list[str] | None = None) -> list[str]:
     if value is None:
         return default or []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:
+        return False
+
+
+def redis_socket_reachable(url: str, timeout_seconds: float = 0.25) -> bool:
+    """Fast local-dev guard so a stale REDIS_URL does not break startup paths."""
+    if not url:
+        return False
+
+    parsed = urlparse(url)
+    if parsed.scheme not in {"redis", "rediss"}:
+        return True
+
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 6379
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
 
 
 DEBUG = env_bool("DJANGO_DEBUG", False)
@@ -61,13 +89,19 @@ INSTALLED_APPS = [
     "flights",
 ]
 
+if module_available("django_prometheus"):
+    INSTALLED_APPS.insert(0, "django_prometheus")
+
 MIDDLEWARE = [
+    "skywatch.middleware.RequestIdMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "skywatch.middleware.RateLimitMiddleware",
+    "skywatch.middleware.StructlogRequestMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -96,7 +130,8 @@ ASGI_APPLICATION = "skywatch.asgi.application"
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = os.environ.get("DJANGO_DATABASE_URL") or os.environ.get("DATABASE_URL", "")
+READ_REPLICA_URL = os.environ.get("READ_REPLICA_DATABASE_URL", "")
 
 if DATABASE_URL:
     parsed = urlparse(DATABASE_URL)
@@ -113,6 +148,16 @@ if DATABASE_URL:
             "PORT": str(parsed.port or 5432),
         },
     }
+    if READ_REPLICA_URL:
+        replica = urlparse(READ_REPLICA_URL)
+        DATABASES["replica"] = {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": unquote(replica.path.lstrip("/")),
+            "USER": unquote(replica.username or ""),
+            "PASSWORD": unquote(replica.password or ""),
+            "HOST": replica.hostname or "",
+            "PORT": str(replica.port or 5432),
+        }
 elif DEBUG:
     DATABASES = {
         "default": {
@@ -123,10 +168,24 @@ elif DEBUG:
 else:
     raise ImproperlyConfigured("DATABASE_URL is required when DJANGO_DEBUG is false.")
 
+ANALYTICS_DB_ALIAS = "replica" if "replica" in DATABASES else "default"
+
 # ---------------------------------------------------------------------------
 # Redis, cache, and channels
 # ---------------------------------------------------------------------------
 REDIS_URL = os.environ.get("REDIS_URL", "")
+ALLOW_IN_MEMORY_CHANNEL_LAYER = env_bool("ALLOW_IN_MEMORY_CHANNEL_LAYER", DEBUG)
+
+REDIS_AVAILABLE = bool(REDIS_URL)
+REDIS_FALLBACK_ACTIVE = False
+if REDIS_AVAILABLE and ALLOW_IN_MEMORY_CHANNEL_LAYER and not redis_socket_reachable(REDIS_URL):
+    REDIS_AVAILABLE = False
+    REDIS_FALLBACK_ACTIVE = True
+    warnings.warn(
+        "REDIS_URL is configured but Redis is not reachable; using in-memory "
+        "cache and channel layer because ALLOW_IN_MEMORY_CHANNEL_LAYER is enabled.",
+        RuntimeWarning,
+    )
 
 CACHES = {
     "default": {
@@ -134,15 +193,11 @@ CACHES = {
     },
 }
 
-if REDIS_URL:
+if REDIS_AVAILABLE:
     CACHES["default"] = {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": REDIS_URL,
     }
-
-REDIS_AVAILABLE = bool(REDIS_URL)
-
-ALLOW_IN_MEMORY_CHANNEL_LAYER = env_bool("ALLOW_IN_MEMORY_CHANNEL_LAYER", DEBUG)
 
 if REDIS_AVAILABLE:
     CHANNEL_LAYERS = {
@@ -178,6 +233,28 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_BEAT_SCHEDULE = {
+    "fetch-flights-every-15s": {
+        "task": "flights.tasks.fetch_flight_states",
+        "schedule": 15.0,
+    },
+    "update-flight-predictions-every-30s": {
+        "task": "flights.tasks.update_flight_predictions",
+        "schedule": 30.0,
+    },
+    "evaluate-custom-alert-rules-every-30s": {
+        "task": "flights.tasks.evaluate_custom_alert_rules",
+        "schedule": 30.0,
+    },
+    "refresh-airspace-restrictions-every-5m": {
+        "task": "flights.tasks.refresh_tfr_cache",
+        "schedule": 300.0,
+    },
+    "synthetic-health-check-every-5m": {
+        "task": "flights.tasks.synthetic_health_check",
+        "schedule": 300.0,
+    },
+}
 
 # ---------------------------------------------------------------------------
 # REST Framework
@@ -214,6 +291,14 @@ CORS_ALLOWED_ORIGINS = env_list(
         "http://127.0.0.1:8080",
     ] if DEBUG else [],
 )
+CORS_ALLOWED_ORIGIN_REGEXES = env_list(
+    "CORS_ALLOWED_ORIGIN_REGEXES",
+    [
+        r"^http://localhost:\d+$",
+        r"^http://127\.0\.0\.1:\d+$",
+    ] if DEBUG else [],
+)
+CORS_ALLOW_CREDENTIALS = env_bool("CORS_ALLOW_CREDENTIALS", True)
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", not DEBUG)
@@ -235,10 +320,17 @@ OPENSKY_USERNAME = os.environ.get("OPENSKY_USERNAME", "")
 OPENSKY_PASSWORD = os.environ.get("OPENSKY_PASSWORD", "")
 ADSBONE_ENABLED = env_bool("ADSBONE_ENABLED", True)
 AIRPLANESLIVE_ENABLED = env_bool("AIRPLANESLIVE_ENABLED", True)
+ADSBLOL_ENABLED = env_bool("ADSBLOL_ENABLED", True)
 OGN_ENABLED = env_bool("OGN_ENABLED", True)
 FAA_RADAR_ENABLED = env_bool("FAA_RADAR_ENABLED", True)
 UAT_ENABLED = env_bool("UAT_ENABLED", True)
 SATELLITE_ADSB_ENABLED = env_bool("SATELLITE_ADSB_ENABLED", True)
+CELESTRAK_SATELLITES_ENABLED = env_bool("CELESTRAK_SATELLITES_ENABLED", True)
+TFR_GEOJSON_URL = os.environ.get("TFR_GEOJSON_URL", "")
+WEBSOCKET_PERMESSAGE_DEFLATE = env_bool("WEBSOCKET_PERMESSAGE_DEFLATE", True)
+WEBSOCKET_COMPRESSION_THRESHOLD_BYTES = int(os.environ.get("WEBSOCKET_COMPRESSION_THRESHOLD_BYTES", "1024"))
+METRICS_USER = os.environ.get("METRICS_USER", "")
+METRICS_PASSWORD = os.environ.get("METRICS_PASSWORD", "")
 
 # ---------------------------------------------------------------------------
 # ML model
@@ -270,19 +362,58 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+DJANGO_ENV = os.environ.get("DJANGO_ENV", "development" if DEBUG else "production")
+if SENTRY_DSN and module_available("sentry_sdk"):
+    import sentry_sdk
+    from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=DJANGO_ENV,
+        traces_sample_rate=0.1,
+        integrations=[DjangoIntegration(), CeleryIntegration()],
+    )
+    sentry_sdk.set_tag("app", "skywatch")
+    sentry_sdk.set_tag("component", "backend")
+
+OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+if module_available("opentelemetry.sdk"):
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.instrumentation.celery import CeleryInstrumentor
+        from opentelemetry.instrumentation.django import DjangoInstrumentor
+        from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+        from opentelemetry.instrumentation.redis import RedisInstrumentor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        trace.set_tracer_provider(
+            TracerProvider(resource=Resource.create({"service.name": "skywatch-backend"}))
+        )
+        trace.get_tracer_provider().add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=OTEL_EXPORTER_OTLP_ENDPOINT))
+        )
+        DjangoInstrumentor().instrument()
+        CeleryInstrumentor().instrument()
+        RedisInstrumentor().instrument()
+        PsycopgInstrumentor().instrument()
+    except Exception:
+        pass
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {
-            "format": "[{asctime}] {levelname} {name} | {message}",
-            "style": "{",
-        },
+        "json": {"()": "skywatch.middleware.JsonLogFormatter"},
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "verbose",
+            "formatter": "json",
         },
     },
     "root": {"handlers": ["console"], "level": LOG_LEVEL},
