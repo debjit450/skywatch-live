@@ -40,6 +40,15 @@ export interface Flight {
   category: number;
   ml_anomaly_score?: number | null;
   data_source?: string;
+  predicted_path?: Array<{
+    lat: number;
+    lon: number;
+    alt?: number | null;
+    timestamp: string;
+    minutes_ahead?: number;
+    confidence?: number;
+  }>;
+  prediction_confidence?: number;
 }
 
 export interface OpenSkyResponse {

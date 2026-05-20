@@ -65,22 +65,18 @@ interface BackendRouteResponse {
 
 function getBackendTrackUrls(icao24: string): string[] {
   const routePath = `/flights/${icao24.toLowerCase()}/route/?hours=12`;
-  const urls: string[] = [];
+  if (!configuredApiBase) return [];
 
-  if (configuredApiBase) {
-    let base: string;
-    if (/\/api\/v1\/?$/.test(configuredApiBase)) {
-      base = configuredApiBase;
-    } else if (/\/api\/v1\/flights\/?$/.test(configuredApiBase)) {
-      base = configuredApiBase.replace(/\/flights\/?$/, "");
-    } else {
-      base = `${configuredApiBase}/api/v1`;
-    }
-    urls.push(`${base}${routePath}`);
+  let base: string;
+  if (/\/api\/v1\/?$/.test(configuredApiBase)) {
+    base = configuredApiBase;
+  } else if (/\/api\/v1\/flights\/?$/.test(configuredApiBase)) {
+    base = configuredApiBase.replace(/\/flights\/?$/, "");
+  } else {
+    base = `${configuredApiBase}/api/v1`;
   }
 
-  urls.push(`/api/v1${routePath}`);
-  return [...new Set(urls)];
+  return [`${base}${routePath}`];
 }
 
 function getCachedTrack(cacheKey: string): FlightTrackData | null {
@@ -228,7 +224,7 @@ export function useFlightTrack(icao24: string | null, enabled = true) {
   const abortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
 
-  const fetchTrack = useCallback(async (id: string) => {
+  const fetchTrack = useCallback(async (id: string, forceRefresh = false) => {
     const cacheKey = normalizeIcao24(id);
     if (!cacheKey) {
       setData(null);
@@ -237,7 +233,7 @@ export function useFlightTrack(icao24: string | null, enabled = true) {
       return;
     }
 
-    const cached = getCachedTrack(cacheKey);
+    const cached = forceRefresh ? null : getCachedTrack(cacheKey);
     if (cached) {
       setData(cached);
       setLoading(false);
@@ -295,5 +291,10 @@ export function useFlightTrack(icao24: string | null, enabled = true) {
     };
   }, [enabled, fetchTrack, icao24]);
 
-  return { data, loading, error, refresh: () => (icao24 ? fetchTrack(icao24) : undefined) };
+  return {
+    data,
+    loading,
+    error,
+    refresh: () => (icao24 ? fetchTrack(icao24, true) : undefined),
+  };
 }

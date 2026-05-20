@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 ADSB_ONE_URL = "https://api.adsb.one/v2/all"
 AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/all"
+ADSB_LOL_URL = "https://api.adsb.lol/v2"
 REQUEST_TIMEOUT = 30
 FT_TO_M = 0.3048
 KT_TO_MS = 0.514444
@@ -165,13 +166,22 @@ def normalize_adsbx_aircraft(aircraft, source_now=None):
     }
 
 
-# Major global aviation hubs to query regional traffic (radius up to 250 nm)
+# Major global aviation hubs to query regional traffic (radius up to 250 nm).
+# Point queries keep public aggregator use bounded while improving coverage
+# beyond the single-network OpenSky feed.
 POINT_HUBS = [
     (40.7128, -74.0060, 250, "New York"),
     (51.5074, -0.1278, 250, "London"),
     (35.6762, 139.6503, 250, "Tokyo"),
     (34.0522, -118.2437, 250, "Los Angeles"),
     (50.1109, 8.6821, 250, "Frankfurt"),
+    (28.6139, 77.2090, 250, "Delhi"),
+    (25.2048, 55.2708, 250, "Dubai"),
+    (1.3521, 103.8198, 250, "Singapore"),
+    (-33.8688, 151.2093, 250, "Sydney"),
+    (-23.5505, -46.6333, 250, "Sao Paulo"),
+    (-26.2041, 28.0473, 250, "Johannesburg"),
+    (43.6532, -79.3832, 250, "Toronto"),
 ]
 
 
@@ -204,28 +214,56 @@ def _fetch_adsbx_source(url, source_name, source_tag=""):
         return []
 
 
-def fetch_adsb_one_states():
-    """Fetch and normalize all current aircraft from adsb.one."""
-    # We fallback to New York point query to bypass global /all 403 Forbidden limits
-    url = "https://api.adsb.one/v2/point/40.7128/-74.0060/250"
-    return _fetch_adsbx_source(url, "ADSB-One (New York)", source_tag="adsb_one")
 
-
-def fetch_airplanes_live_states():
-    """Fetch and normalize current aircraft from airplanes.live point hubs."""
+def _fetch_point_hub_states(base_url, source_name, source_tag, sleep_seconds):
+    """Query all POINT_HUBS for an ADS-B aggregator endpoint and deduplicate."""
     all_states = []
     seen_icaos = set()
 
     for lat, lon, rad, name in POINT_HUBS:
-        url = f"https://api.airplanes.live/v2/point/{lat}/{lon}/{rad}"
-        states = _fetch_adsbx_source(url, f"Airplanes.live ({name})", source_tag="airplanes_live")
+        url = f"{base_url}/point/{lat}/{lon}/{rad}"
+        states = _fetch_adsbx_source(url, f"{source_name} ({name})", source_tag=source_tag)
         for s in states:
             icao = s.get("icao24")
             if icao and icao not in seen_icaos:
                 seen_icaos.add(icao)
                 all_states.append(s)
-        time.sleep(1.0)  # Respect the 1 req/sec API rate limit
+        time.sleep(sleep_seconds)
 
-    logger.info("Airplanes.live point query total: %d unique aircraft", len(all_states))
+    logger.info("%s point query total: %d unique aircraft", source_name, len(all_states))
     return all_states
 
+
+def fetch_adsb_one_states():
+    """Fetch and normalize aircraft from adsb.one using regional point queries.
+
+    The global /v2/all endpoint returns 403 Forbidden on public access, so we
+    use the same multi-hub point-query strategy as the other supplemental sources
+    to get broad global coverage instead of a single New York region.
+    """
+    return _fetch_point_hub_states(
+        base_url="https://api.adsb.one/v2",
+        source_name="ADSB-One",
+        source_tag="adsb_one",
+        sleep_seconds=0.5,
+    )
+
+
+def fetch_airplanes_live_states():
+    """Fetch and normalize current aircraft from airplanes.live point hubs."""
+    return _fetch_point_hub_states(
+        base_url="https://api.airplanes.live/v2",
+        source_name="Airplanes.live",
+        source_tag="airplanes_live",
+        sleep_seconds=1.0,
+    )
+
+
+def fetch_adsb_lol_states():
+    """Fetch and normalize current aircraft from ADSB.lol public point hubs."""
+    return _fetch_point_hub_states(
+        base_url=ADSB_LOL_URL,
+        source_name="ADSB.lol",
+        source_tag="adsb_lol",
+        sleep_seconds=0.7,
+    )

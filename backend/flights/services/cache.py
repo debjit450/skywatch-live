@@ -6,12 +6,16 @@ Falls back to in-memory dict when Redis is unavailable.
 import json
 import logging
 import time
+from functools import wraps
 
 logger = logging.getLogger(__name__)
 _memory_cache = {}
 _route_memory_expires = {}
+_cache_stats = {"hits": 0, "misses": 0}
 MAX_MEMORY_CACHE_ENTRIES = 5000
 ROUTE_CACHE_TTL_SECONDS = 3600
+AIRPORT_METADATA_TTL_SECONDS = 30 * 60
+AIRCRAFT_METADATA_TTL_SECONDS = 15 * 60
 
 
 def _prune_memory_cache():
@@ -55,6 +59,144 @@ def _get_redis():
         logger.warning("Failed to initialize Redis client: %s", exc)
 
     return _redis_client
+
+
+def _record_cache_hit(hit):
+    key = "hits" if hit else "misses"
+    _cache_stats[key] += 1
+    r = _get_redis()
+    if r:
+        try:
+            r.incr(f"metrics:cache:{key}")
+        except Exception:
+            pass
+
+
+def _set_json(key, value, ttl):
+    _prune_memory_cache()
+    payload = json.dumps(value)
+    r = _get_redis()
+    if r:
+        try:
+            r.setex(key, ttl, payload)
+            return
+        except Exception as exc:
+            logger.debug("Redis set failed for %s: %s", key, exc)
+    _memory_cache[key] = (payload, time.time() + ttl)
+
+
+def _get_json(key):
+    _prune_memory_cache()
+    r = _get_redis()
+    if r:
+        try:
+            data = r.get(key)
+            if data is not None:
+                _record_cache_hit(True)
+                return json.loads(data)
+        except Exception as exc:
+            logger.debug("Redis get failed for %s: %s", key, exc)
+
+    cached = _memory_cache.get(key)
+    if cached and isinstance(cached, tuple):
+        payload, expires = cached
+        if time.time() < expires:
+            _record_cache_hit(True)
+            return json.loads(payload)
+        _memory_cache.pop(key, None)
+
+    _record_cache_hit(False)
+    return None
+
+
+def delete_cache_key(key):
+    """Invalidate one logical cache key in Redis and the local fallback."""
+    r = _get_redis()
+    if r:
+        try:
+            r.delete(key)
+        except Exception:
+            pass
+    _memory_cache.pop(key, None)
+    _route_memory_expires.pop(key, None)
+
+
+def airport_cache_key(icao_code):
+    return f"airport:{str(icao_code).strip().upper()}"
+
+
+def aircraft_cache_key(icao_hex):
+    return f"aircraft:{str(icao_hex).strip().lower()}"
+
+
+def get_airport_metadata(icao_code, lookup_func):
+    """Cache airport metadata lookups by ICAO code for 30 minutes."""
+    key = airport_cache_key(icao_code)
+    cached = _get_json(key)
+    if cached is not None:
+        return cached
+    value = lookup_func(icao_code)
+    if value is not None:
+        _set_json(key, value, AIRPORT_METADATA_TTL_SECONDS)
+    return value
+
+
+def get_aircraft_metadata(icao_hex, lookup_func):
+    """Cache aircraft metadata lookups by ICAO hex for 15 minutes."""
+    key = aircraft_cache_key(icao_hex)
+    cached = _get_json(key)
+    if cached is not None:
+        return cached
+    value = lookup_func(icao_hex)
+    if value is not None:
+        _set_json(key, value, AIRCRAFT_METADATA_TTL_SECONDS)
+    return value
+
+
+def invalidate_airport_metadata(icao_code):
+    delete_cache_key(airport_cache_key(icao_code))
+
+
+def invalidate_aircraft_metadata(icao_hex):
+    delete_cache_key(aircraft_cache_key(icao_hex))
+
+
+def cached_lookup(key_builder, ttl):
+    """Decorator for small metadata lookups where the cache key is data-derived."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = key_builder(*args, **kwargs)
+            cached = _get_json(key)
+            if cached is not None:
+                return cached
+            value = func(*args, **kwargs)
+            if value is not None:
+                _set_json(key, value, ttl)
+            return value
+
+        return wrapper
+
+    return decorator
+
+
+def get_cache_stats():
+    """Return aggregate cache hit/miss counters and hit ratio."""
+    hits = _cache_stats["hits"]
+    misses = _cache_stats["misses"]
+    r = _get_redis()
+    if r:
+        try:
+            hits = int(r.get("metrics:cache:hits") or hits)
+            misses = int(r.get("metrics:cache:misses") or misses)
+        except Exception:
+            pass
+    total = hits + misses
+    return {
+        "hits": hits,
+        "misses": misses,
+        "hit_ratio": (hits / total) if total else 0.0,
+    }
 
 
 def set_current_flights(flights_data):

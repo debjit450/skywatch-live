@@ -6,6 +6,7 @@ anomaly events, and system-level dashboard metrics.
 """
 
 from django.db import models
+from django.conf import settings
 from django.utils import timezone
 
 
@@ -29,6 +30,9 @@ class Aircraft(models.Model):
     class Meta:
         ordering = ["-last_seen"]
         verbose_name_plural = "Aircraft"
+        indexes = [
+            models.Index(fields=["icao24"], name="aircraft_icao_hex_idx"),
+        ]
 
     def __str__(self):
         return f"{self.icao24} ({self.callsign or 'N/A'}) — {self.origin_country}"
@@ -62,6 +66,12 @@ class FlightState(models.Model):
         max_length=20, blank=True, default="",
         help_text="Source: opensky, adsb_one, airplanes_live, ogn, faa_radar, uat, satellite",
     )
+    status = models.CharField(max_length=20, blank=True, default="active", db_index=True)
+    updated_at = models.DateTimeField(default=timezone.now, db_index=True)
+    origin_airport = models.CharField(max_length=8, blank=True, default="", db_index=True)
+    destination_airport = models.CharField(max_length=8, blank=True, default="", db_index=True)
+    predicted_path = models.JSONField(default=list, blank=True)
+    prediction_confidence = models.FloatField(default=0.0)
 
     # ML anomaly score for this state
     ml_anomaly_score = models.FloatField(null=True, blank=True, help_text="Isolation Forest score (-1 to 1)")
@@ -71,6 +81,8 @@ class FlightState(models.Model):
         indexes = [
             models.Index(fields=["aircraft", "timestamp"]),
             models.Index(fields=["timestamp"]),
+            models.Index(fields=["status", "-updated_at"], name="flight_status_updated_idx"),
+            models.Index(fields=["origin_airport", "destination_airport"], name="flight_route_airports_idx"),
         ]
         get_latest_by = "timestamp"
 
@@ -108,6 +120,60 @@ class FlightRoute(models.Model):
         return f"Route {self.session_id} for {self.aircraft_id} ({self.point_count} pts)"
 
 
+class FlightPosition(models.Model):
+    """Append-only position history for historical playback queries."""
+
+    aircraft = models.ForeignKey(
+        Aircraft, on_delete=models.CASCADE, related_name="positions", db_index=True
+    )
+    timestamp = models.DateTimeField(db_index=True)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    altitude = models.FloatField(null=True, blank=True)
+    velocity = models.FloatField(null=True, blank=True)
+    heading = models.FloatField(null=True, blank=True)
+    vertical_rate = models.FloatField(null=True, blank=True)
+    on_ground = models.BooleanField(default=False)
+    data_source = models.CharField(max_length=20, blank=True, default="")
+
+    class Meta:
+        ordering = ["timestamp"]
+        indexes = [
+            models.Index(fields=["aircraft", "timestamp"], name="flight_position_lookup_idx"),
+        ]
+
+    def __str__(self):
+        return f"Position {self.aircraft_id} @ {self.timestamp.isoformat()}"
+
+
+class AlertRule(models.Model):
+    """User-defined anomaly rule evaluated against live flights."""
+
+    TYPE_CHOICES = [
+        ("geofence", "Geofence"),
+        ("threshold", "Threshold"),
+        ("pattern", "Pattern"),
+    ]
+
+    name = models.CharField(max_length=120)
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    config = models.JSONField(default=dict, blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="alert_rules")
+    active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [
+            models.Index(fields=["user", "active"], name="flights_ale_user_id_d40d56_idx"),
+            models.Index(fields=["type", "active"], name="flights_ale_type_f2aff0_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.type})"
+
+
 class AnomalyEvent(models.Model):
     """A detected anomaly — either rule-based or ML-detected."""
 
@@ -138,6 +204,7 @@ class AnomalyEvent(models.Model):
         ("altitude_bust", "Altitude Bust"),
         ("speed_envelope", "Speed Envelope Violation"),
         ("behavioral", "Behavioral Deviation"),
+        ("custom_rule", "Custom Alert Rule"),
     ]
 
     aircraft = models.ForeignKey(
@@ -150,6 +217,28 @@ class AnomalyEvent(models.Model):
     )
     ml_score = models.FloatField(
         null=True, blank=True, help_text="Raw Isolation Forest anomaly score"
+    )
+    isolation_score = models.FloatField(null=True, blank=True)
+    lstm_score = models.FloatField(null=True, blank=True)
+    combined_score = models.FloatField(null=True, blank=True)
+    explanation = models.JSONField(default=list, blank=True)
+    feedback = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        choices=[
+            ("", "Unreviewed"),
+            ("true_positive", "True positive"),
+            ("false_positive", "False positive"),
+        ],
+    )
+    source = models.CharField(max_length=30, blank=True, default="detector", db_index=True)
+    alert_rule = models.ForeignKey(
+        AlertRule,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="anomalies",
     )
     details = models.JSONField(default=dict, blank=True)
     detected_at = models.DateTimeField(default=timezone.now, db_index=True)
@@ -167,6 +256,8 @@ class AnomalyEvent(models.Model):
         indexes = [
             models.Index(fields=["is_active", "-detected_at"]),
             models.Index(fields=["anomaly_type", "-detected_at"]),
+            models.Index(fields=["-detected_at"], name="anomaly_detected_desc_idx"),
+            models.Index(fields=["aircraft", "severity"], name="anomaly_flight_severity_idx"),
         ]
 
     def __str__(self):

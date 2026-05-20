@@ -52,6 +52,13 @@ def _is_satellite_received(aircraft):
     if aircraft.get("tisb") and _is_oceanic_position(aircraft):
         return True
 
+    # airplanes.live does NOT set a "sat" flag in its public API.
+    # Infer satellite reception: aircraft over ocean that are NOT
+    # MLAT-derived are almost certainly satellite-received, since
+    # ground-based ADS-B coverage doesn't reach open ocean.
+    if _is_oceanic_position(aircraft) and "mlat" not in ac_type:
+        return True
+
     return False
 
 

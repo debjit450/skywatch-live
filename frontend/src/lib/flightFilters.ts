@@ -19,6 +19,7 @@ export interface FlightFilters {
   speedBand: SpeedBand;
   verticalBand: VerticalBand;
   severity: SeverityFilter;
+  anomalyType: string;
   minAltitudeFt: string;
   maxAltitudeFt: string;
   minSpeedKt: string;
@@ -70,10 +71,34 @@ export const DEFAULT_FLIGHT_FILTERS: FlightFilters = {
   speedBand: "all",
   verticalBand: "all",
   severity: "all",
+  anomalyType: "all",
   minAltitudeFt: "",
   maxAltitudeFt: "",
   minSpeedKt: "",
   maxSpeedKt: "",
+};
+
+export const ANOMALY_TYPE_LABELS: Record<string, string> = {
+  ghost: "Ghost Flight",
+  squawk_7500: "Hijack (7500)",
+  squawk_7600: "Radio Failure (7600)",
+  squawk_7700: "Emergency (7700)",
+  low_fast: "Low & Fast Outlier",
+  rapid_descent: "Rapid Descent",
+  signal_lost: "Signal Lost Outlier",
+  ml_anomaly: "ML-Detected Anomaly",
+  speed_anomaly: "Unusual Speed",
+  altitude_anomaly: "Unusual Altitude",
+  heading_anomaly: "Unusual Heading",
+  position_anomaly: "Position Jump",
+  circling: "Circling / Loitering",
+  trajectory_deviation: "Trajectory Deviation",
+  geofence: "Restricted Airspace",
+  proximity: "Proximity Alert",
+  altitude_bust: "Altitude Bust",
+  speed_envelope: "Speed Envelope Violation",
+  behavioral: "Behavioral Deviation",
+  custom_rule: "Custom Alert Rule",
 };
 
 export const FLIGHT_FILTER_MODES: Array<{ value: FlightFilterMode; label: string }> = [
@@ -440,11 +465,20 @@ export function describeFlightFilters(filters: FlightFilters): string[] {
     );
   }
   if (filters.severity !== "all") labels.push(`Severity: ${filters.severity}`);
+  if (filters.anomalyType && filters.anomalyType !== "all") {
+    labels.push(`Anomaly: ${ANOMALY_TYPE_LABELS[filters.anomalyType] || filters.anomalyType}`);
+  }
   if (filters.minAltitudeFt.trim()) labels.push(`Alt >= ${filters.minAltitudeFt.trim()} ft`);
   if (filters.maxAltitudeFt.trim()) labels.push(`Alt <= ${filters.maxAltitudeFt.trim()} ft`);
   if (filters.minSpeedKt.trim()) labels.push(`Speed >= ${filters.minSpeedKt.trim()} kt`);
   if (filters.maxSpeedKt.trim()) labels.push(`Speed <= ${filters.maxSpeedKt.trim()} kt`);
   return labels;
+}
+
+function anomalyTypeMatches(anomaly: AnomalousFlight | undefined, typeFilter: string): boolean {
+  if (typeFilter === "all") return true;
+  if (!anomaly) return false;
+  return anomaly.anomalies.some((a) => a.type === typeFilter);
 }
 
 export function applyFlightFilters(
@@ -464,6 +498,12 @@ export function applyFlightFilters(
     if (!speedBandMatches(flight, filters.speedBand)) return;
     if (!verticalBandMatches(flight, filters.verticalBand)) return;
     if (!severityMatches(anomaly, filters.severity)) return;
+    if (
+      filters.anomalyType &&
+      filters.anomalyType !== "all" &&
+      !anomalyTypeMatches(anomaly, filters.anomalyType)
+    )
+      return;
     if (!rangeMatches(flightAltitudeFt(flight), filters.minAltitudeFt, filters.maxAltitudeFt))
       return;
     if (!rangeMatches(flightSpeedKt(flight), filters.minSpeedKt, filters.maxSpeedKt)) return;

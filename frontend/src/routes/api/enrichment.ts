@@ -519,11 +519,13 @@ function calculateRouteScore(
   const deviation = Math.abs(totalDist - routeLength);
   const deviationRatio = deviation / routeLength;
 
-  if (distToOrigin > routeLength * 1.5 || distToDest > routeLength * 1.5) {
+  // Only reject when far from DESTINATION (not origin — flights past mid-route
+  // will always be far from origin, which is expected and valid).
+  if (distToDest > routeLength * 1.5) {
     return 0;
   }
 
-  if (deviationRatio > 0.5) {
+  if (deviationRatio > 0.6) {
     return 0;
   }
 

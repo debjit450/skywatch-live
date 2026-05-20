@@ -1,22 +1,40 @@
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Filter,
   Globe,
+  Keyboard,
+  LayoutDashboard,
   PanelRightClose,
   PanelRightOpen,
+  Satellite,
   Search,
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { memo, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import * as Tabs from "@radix-ui/react-tabs";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Status } from "@/hooks/useFlights";
-import type { AnomalousFlight } from "@/lib/anomaly";
+import type { SatelliteStatus } from "@/hooks/useSatellites";
+import type { AnomalousFlight, Severity } from "@/lib/anomaly";
 import type { Flight } from "@/lib/opensky";
+import type { SatelliteGroupSummary, SatelliteObject } from "@/lib/satellites";
 import { topSeverity } from "@/lib/anomaly";
 import { anomalyIcons } from "@/lib/icons";
-import { DATA_SOURCES, getDataSourceInfo } from "@/lib/data-sources";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { getDataSourceInfo } from "@/lib/data-sources";
 import { getClassesForLegend } from "@/lib/aircraft-class";
 import {
   ALTITUDE_BANDS,
@@ -24,6 +42,7 @@ import {
   SEVERITY_FILTERS,
   SPEED_BANDS,
   VERTICAL_BANDS,
+  ANOMALY_TYPE_LABELS,
   type AltitudeBand,
   type FlightFilterMode,
   type FlightFilters,
@@ -40,12 +59,48 @@ import {
   speedKt,
 } from "@/lib/format";
 
-const sevClass: Record<string, string> = {
-  critical: "high",
-  high: "high",
-  medium: "medium",
-  low: "low",
+const sevColors: Record<string, string> = {
+  critical: "text-rose-400 bg-rose-500/10 border-rose-500/20",
+  high: "text-rose-400 bg-rose-500/10 border-rose-500/20",
+  medium: "text-amber-400 bg-amber-500/10 border-amber-500/20",
+  low: "text-blue-400 bg-blue-500/10 border-blue-500/20",
 };
+
+const sevIconColors: Record<string, string> = {
+  critical: "text-rose-400",
+  high: "text-rose-400",
+  medium: "text-amber-400",
+  low: "text-blue-400",
+};
+
+function exportAnomaliesCsv(anomalies: AnomalousFlight[]) {
+  const rows = anomalies.flatMap((flight) =>
+    flight.anomalies.map((item) => ({
+      icao24: flight.icao24,
+      callsign: flight.callsign ?? "",
+      country: flight.origin_country,
+      type: item.type,
+      severity: item.severity,
+      detectedAt: new Date(flight.detectedAt).toISOString(),
+    })),
+  );
+  const header = ["icao24", "callsign", "country", "type", "severity", "detectedAt"];
+  const csv = [
+    header.join(","),
+    ...rows.map((row) =>
+      header
+        .map((key) => `"${String(row[key as keyof typeof row]).replace(/"/g, '""')}"`)
+        .join(","),
+    ),
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `skywatch_visible_anomalies_${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 interface Props {
   flights: Flight[];
@@ -58,6 +113,10 @@ interface Props {
   selectedId: string | null;
   status: Status;
   isLoading: boolean;
+  satellites: SatelliteObject[];
+  satelliteGroups: SatelliteGroupSummary[];
+  satelliteStatus: SatelliteStatus;
+  satelliteErrorMessage: string | null;
   onSelect: (id: string) => void;
   onFiltersChange: Dispatch<SetStateAction<FlightFilters>>;
   onClearFilters: () => void;
@@ -76,12 +135,18 @@ function GlobalDashboard({
   selectedId,
   status,
   isLoading,
+  satellites,
+  satelliteGroups,
+  satelliteStatus,
+  satelliteErrorMessage,
   onSelect,
   onFiltersChange,
   onClearFilters,
   isCollapsed,
   onToggleCollapse,
 }: Props) {
+  const [activeTab, setActiveTab] = useState("global");
+
   const {
     activeCount,
     inAirCount,
@@ -94,7 +159,6 @@ function GlobalDashboard({
     const countries = new Map<string, number>();
     let airborne = 0;
     let helicopters = 0;
-
     const sourceMap = new Map<string, number>();
 
     for (const flight of flights) {
@@ -105,7 +169,7 @@ function GlobalDashboard({
       sourceMap.set(src, (sourceMap.get(src) || 0) + 1);
     }
 
-    const sourceCounts = Array.from(sourceMap.entries())
+    const srcCounts = Array.from(sourceMap.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([key, count]) => ({ key, count, info: getDataSourceInfo(key) }));
 
@@ -118,7 +182,7 @@ function GlobalDashboard({
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5),
       recentFlights: flights.slice(0, 12),
-      sourceCounts,
+      sourceCounts: srcCounts,
     };
   }, [flights]);
 
@@ -131,48 +195,209 @@ function GlobalDashboard({
     return Array.from(countries.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [allFlights]);
 
+  const satelliteSummary = useMemo(() => {
+    const leo = satellites.filter((sat) => (sat.altitudeKm ?? Infinity) < 2000).length;
+    const degraded = satellites.filter(
+      (sat) => sat.orbitQuality === "degraded" || sat.orbitQuality === "stale",
+    ).length;
+    const stations = satellites.filter((sat) => sat.group === "stations").length;
+    const activeGroups = satelliteGroups
+      .filter((group) => group.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+
+    return { leo, degraded, stations, activeGroups };
+  }, [satelliteGroups, satellites]);
+
+  useEffect(() => {
+    const openAnomalies = () => setActiveTab("anomalies");
+    window.addEventListener("skywatch:open-anomalies", openAnomalies);
+    return () => window.removeEventListener("skywatch:open-anomalies", openAnomalies);
+  }, []);
+
   if (isCollapsed) {
     return (
-      <button
-        type="button"
-        className="sw-dashboard-reopen"
-        onClick={onToggleCollapse}
-        aria-label="Open dashboard panel"
-      >
-        <PanelRightOpen />
-        <span>Dashboard</span>
-        <strong>{activeCount.toLocaleString()}</strong>
-      </button>
+      <aside className="fixed right-4 top-4 bottom-4 w-16 bg-[rgba(4,15,8,0.45)] backdrop-blur-xl border border-[var(--sw-border-strong)] rounded-2xl shadow-2xl flex flex-col items-center py-4 justify-between text-[var(--sw-text)] z-[1100] transition-all duration-300 overflow-hidden">
+        {/* Top actions & navigation */}
+        <div className="flex flex-col items-center gap-4 w-full px-2">
+          {/* Expand trigger */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Expand Dashboard"
+          >
+            <PanelRightOpen className="w-5 h-5" />
+          </button>
+
+          <div className="w-8 h-px bg-[var(--sw-border)]" />
+
+          {/* Navigation shortcuts */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("global");
+              onToggleCollapse();
+            }}
+            className="relative p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Global Overview"
+          >
+            <Globe className="w-5 h-5 text-blue-400" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("flights");
+              onToggleCollapse();
+            }}
+            className="relative p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Search Flights"
+          >
+            <Search className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("anomalies");
+              onToggleCollapse();
+            }}
+            className="relative p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Anomaly Feed"
+          >
+            <AlertTriangle className="w-5 h-5" />
+            {anomalies.length > 0 && (
+              <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-emerald-500 border-2 border-[var(--sw-surface-strong)] rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
+            )}
+          </button>
+        </div>
+
+        {/* Map panel triggers */}
+        <div className="flex flex-col items-center gap-4 w-full px-2">
+          <div className="w-8 h-px bg-[var(--sw-border)]" />
+
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-analytics"))}
+            className="p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Traffic Analytics"
+          >
+            <BarChart3 className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-alert-rules"))}
+            className="p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Alert Rules"
+          >
+            <AlertTriangle className="w-5 h-5 text-amber-500" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-layout"))}
+            className="p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Dashboard Layout"
+          >
+            <LayoutDashboard className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-shortcuts"))}
+            className="p-2 rounded-lg text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+            title="Keyboard Shortcuts"
+          >
+            <Keyboard className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Bottom stats badge */}
+        <div className="flex flex-col items-center gap-2 mb-2 select-none">
+          <div className="relative flex w-1.5 h-1.5 mb-1">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-emerald-500"></span>
+          </div>
+          <div className="flex flex-col items-center" style={{ writingMode: "vertical-rl" }}>
+            <strong className="text-xs font-mono text-blue-400 font-bold tracking-wider">
+              {activeCount.toLocaleString()}
+            </strong>
+            <span className="text-[9px] font-semibold text-[var(--sw-dim)] uppercase tracking-widest mt-1">
+              Live
+            </span>
+          </div>
+        </div>
+      </aside>
     );
   }
 
   return (
-    <aside className="sw-sidebar flex flex-col">
-      <Tabs.Root defaultValue="global" className="flex-1 flex flex-col h-full overflow-hidden">
-        <div className="sw-sidebar-header flex flex-col gap-3">
-          <div className="flex items-start justify-between gap-3">
+    <aside className="fixed right-4 top-4 bottom-4 w-[380px] bg-[rgba(4,15,8,0.45)] backdrop-blur-xl border border-[var(--sw-border-strong)] rounded-2xl shadow-2xl flex flex-col font-sans text-[var(--sw-text)] z-[1100] transition-all duration-300 overflow-hidden">
+      <Tabs.Root
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="flex-1 flex flex-col h-full overflow-hidden"
+      >
+        {/* ── Header ── */}
+        <div className="flex-shrink-0 px-5 pt-5 pb-0 border-b border-[var(--sw-border)] bg-[var(--sw-surface-soft)]">
+          <div className="flex items-start justify-between gap-2 mb-4">
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <Globe className="h-4 w-4" />
-                <h2>Global Dashboard</h2>
+              <div className="flex items-center gap-2 mb-1">
+                <Globe className="h-4 w-4 text-blue-400" />
+                <h2 className="text-sm font-bold text-[var(--sw-text)] tracking-wide">
+                  Surveillance Operations Control Panel
+                </h2>
               </div>
-              <p>
-                {activeCount.toLocaleString()} visible / {totalFlights.toLocaleString()} tracked
+              <p className="text-[10px] text-[var(--sw-muted)] font-medium">
+                {activeCount.toLocaleString()} active surveillance tracks /{" "}
+                {totalFlights.toLocaleString()} total target files
               </p>
             </div>
-            <div className="flex items-center gap-2 sw-sidebar-toggle-container">
-              {!isCollapsed && (
-                <span className="sw-count-badge">
-                  {activeFilterCount > 0 ? `${activeFilterCount} Filters` : `${activeCount} Live`}
-                </span>
-              )}
+            <div className="flex items-center gap-1.5 flex-shrink-0 bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] p-1 rounded-lg">
               <button
                 type="button"
-                className="sw-sidebar-toggle"
-                onClick={onToggleCollapse}
-                aria-label={isCollapsed ? "Expand dashboard" : "Collapse dashboard"}
+                onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-analytics"))}
+                className="p-1.5 rounded-md text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+                title="Traffic Analytics"
               >
-                {isCollapsed ? <PanelRightOpen /> : <PanelRightClose />}
+                <BarChart3 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-alert-rules"))}
+                className="p-1.5 rounded-md text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+                title="Alert Rules"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-layout"))}
+                className="p-1.5 rounded-md text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+                title="Dashboard Layout"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("skywatch:toggle-shortcuts"))}
+                className="p-1.5 rounded-md text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+                title="Keyboard Shortcuts"
+              >
+                <Keyboard className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="w-px h-3.5 bg-[var(--sw-border)] mx-0.5" />
+
+              <button
+                type="button"
+                className="p-1.5 rounded-md text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)] transition-colors outline-none"
+                onClick={onToggleCollapse}
+                aria-label="Collapse dashboard"
+              >
+                <PanelRightClose className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -185,192 +410,389 @@ function GlobalDashboard({
             onClearFilters={onClearFilters}
           />
 
-          <Tabs.List className="sw-tabs-list">
-            <Tabs.Trigger value="global" className="sw-tabs-trigger">
-              Overview
-            </Tabs.Trigger>
-            <Tabs.Trigger value="flights" className="sw-tabs-trigger">
-              Search
-            </Tabs.Trigger>
-            <Tabs.Trigger value="anomalies" className="sw-tabs-trigger anomalies">
-              Anomalies
-              {anomalies.length > 0 && <span className="sw-tab-badge">{anomalies.length}</span>}
-            </Tabs.Trigger>
+          <Tabs.List className="flex gap-6 mt-4 border-b border-transparent">
+            {["global", "flights", "anomalies"].map((tab) => (
+              <Tabs.Trigger
+                key={tab}
+                value={tab}
+                className="relative pb-3 text-xs font-semibold uppercase tracking-wider text-[var(--sw-muted)] hover:text-[var(--sw-text)] data-[state=active]:text-[var(--sw-text)] outline-none transition-colors"
+              >
+                {tab === "global" ? "Overview" : tab === "flights" ? "Search" : "Anomalies"}
+                {tab === "anomalies" && anomalies.length > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[9px] font-bold">
+                    {anomalies.length}
+                  </span>
+                )}
+                {/* Active Indicator */}
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 opacity-0 scale-x-50 transition-all data-[state=active]:opacity-100 data-[state=active]:scale-x-100" />
+              </Tabs.Trigger>
+            ))}
           </Tabs.List>
         </div>
 
-        <div className="sw-sidebar-body sw-scroll flex-1">
-          <Tabs.Content value="global" className="h-full flex flex-col outline-none">
+        {/* ── Body ── */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 overscroll-contain">
+          {/* TAB: GLOBAL OVERVIEW */}
+          <Tabs.Content value="global" className="h-full flex flex-col p-4 gap-4 outline-none">
             {isLoading && totalFlights === 0 ? (
               <FeedSkeleton />
             ) : flights.length === 0 ? (
               <EmptyState
-                icon={<Activity />}
+                icon={<Activity className="w-8 h-8 opacity-20" />}
                 title={activeFilterCount > 0 ? "No matching flights" : "No active flights detected"}
                 detail={status === "error" ? "Flight feed is offline" : "Monitoring is active"}
               />
             ) : (
-              <div className="sw-overview-stack">
-                <section className="sw-overview-section">
-                  <h3 className="sw-list-heading">Visible State</h3>
-                  <div className="sw-overview-grid">
-                    <div className="sw-summary-tile">
-                      <span>{inAirCount.toLocaleString()}</span>
-                      <small>Airborne</small>
-                    </div>
-                    <div className="sw-summary-tile neutral">
-                      <span>{groundCount.toLocaleString()}</span>
-                      <small>Ground</small>
-                    </div>
-                    <div className="sw-summary-tile">
-                      <span>{anomalies.length.toLocaleString()}</span>
-                      <small>Anomaly</small>
-                    </div>
-                    <div className="sw-summary-tile neutral">
-                      <span>{Math.max(totalFlights - activeCount, 0).toLocaleString()}</span>
-                      <small>Hidden</small>
-                    </div>
+              <>
+                <section className="bg-white/5 border border-white/5 rounded-xl p-4">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-3">
+                    Feed Surveillance Metrics
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <SummaryTile value={inAirCount.toLocaleString()} label="Airborne Tracks" />
+                    <SummaryTile value={groundCount.toLocaleString()} label="Surface Tracks" />
+                    <SummaryTile
+                      value={anomalies.length.toLocaleString()}
+                      label="Anomalous Tracks"
+                      highlight
+                    />
+                    <SummaryTile
+                      value={Math.max(totalFlights - activeCount, 0).toLocaleString()}
+                      label="Filtered / Hidden Tracks"
+                    />
                   </div>
                 </section>
 
                 {sourceCounts.length > 0 && (
-                  <section className="sw-overview-section">
-                    <h3 className="sw-list-heading sw-list-heading-row">
+                  <section className="bg-white/5 border border-white/5 rounded-xl p-4">
+                    <h3 className="flex justify-between items-center text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-3">
                       <span>Data Sources</span>
-                      <span>{sourceCounts.length} active</span>
+                      <span className="text-zinc-500">{sourceCounts.length} active</span>
                     </h3>
-                    <ul className="sw-source-list">
+                    <ul className="divide-y divide-white/5">
                       {sourceCounts.map(({ key, count, info }) => (
-                        <li key={key} className="sw-source-row">
-                          <span className="sw-source-dot" style={{ backgroundColor: info.color }} />
-                          <span className="sw-source-name truncate">{info.shortName}</span>
-                          <span className="sw-source-type">{info.type}</span>
-                          <span className="sw-source-count">{count.toLocaleString()}</span>
+                        <li
+                          key={key}
+                          className="flex items-center justify-between py-2 hover:bg-white/5 px-2 -mx-2 rounded-md transition-colors"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-2 h-2 rounded-full"
+                              style={{ backgroundColor: info.color }}
+                            />
+                            <span className="text-xs text-zinc-300 font-medium truncate">
+                              {info.shortName}
+                            </span>
+                            <span className="text-[10px] text-zinc-500 px-1 border border-white/10 rounded">
+                              {info.type}
+                            </span>
+                          </div>
+                          <span className="text-xs font-mono text-zinc-400">
+                            {count.toLocaleString()}
+                          </span>
                         </li>
                       ))}
                     </ul>
                   </section>
                 )}
 
-                <section className="sw-overview-section">
-                  <h3 className="sw-list-heading sw-list-heading-row">
-                    <span>Top Countries</span>
-                    <span>Visible</span>
+                <section className="bg-white/5 border border-white/5 rounded-xl p-4">
+                  <h3 className="flex justify-between items-center text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-3">
+                    <span>Space Layer</span>
+                    <span className="text-zinc-500">
+                      {satelliteStatus === "ready" ? "SGP4" : satelliteStatus}
+                    </span>
                   </h3>
-                  <ul className="sw-country-list">
+                  {satellites.length > 0 ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        <SummaryTile
+                          value={satellites.length.toLocaleString()}
+                          label="Orbiting Satellite Objects"
+                        />
+                        <SummaryTile
+                          value={satelliteSummary.leo.toLocaleString()}
+                          label="Low Earth Orbit (LEO)"
+                        />
+                        <SummaryTile
+                          value={satelliteSummary.stations.toLocaleString()}
+                          label="Space Stations"
+                        />
+                        <SummaryTile
+                          value={satelliteSummary.degraded.toLocaleString()}
+                          label="Stale / Degraded TLE States"
+                          warn={satelliteSummary.degraded > 0}
+                        />
+                      </div>
+                      {satelliteSummary.activeGroups.length > 0 && (
+                        <ul className="divide-y divide-white/5 mt-2 border-t border-white/5 pt-2">
+                          {satelliteSummary.activeGroups.map((group) => (
+                            <li
+                              key={group.key}
+                              className="flex items-center justify-between py-2 hover:bg-white/5 px-2 -mx-2 rounded-md transition-colors"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className="w-2 h-2 rounded-full"
+                                  style={{ backgroundColor: group.color }}
+                                />
+                                <span className="text-xs text-zinc-300 font-medium truncate">
+                                  {group.name}
+                                </span>
+                                <span className="text-[10px] text-zinc-500 px-1 border border-white/10 rounded">
+                                  CelesTrak
+                                </span>
+                              </div>
+                              <span className="text-xs font-mono text-zinc-400">
+                                {group.count.toLocaleString()}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-4 text-zinc-500 gap-2">
+                      <Satellite className="w-6 h-6 opacity-50" />
+                      <span className="text-xs text-center">
+                        {satelliteStatus === "error"
+                          ? satelliteErrorMessage || "Catalog unavailable"
+                          : "Loading orbital catalog"}
+                      </span>
+                    </div>
+                  )}
+                </section>
+
+                <section className="bg-white/5 border border-white/5 rounded-xl p-4">
+                  <h3 className="flex justify-between items-center text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-3">
+                    <span>Top Countries</span>
+                    <span className="text-zinc-500">Visible</span>
+                  </h3>
+                  <ul className="divide-y divide-white/5">
                     {topCountries.map(([country, count]) => (
-                      <li key={country} className="sw-country-row">
-                        <span className="truncate pr-2">{country}</span>
-                        <span className="sw-country-count">{count}</span>
+                      <li key={country} className="flex justify-between items-center py-2 text-xs">
+                        <span className="text-zinc-300 truncate pr-3">{country}</span>
+                        <span className="font-mono text-zinc-400">{count.toLocaleString()}</span>
                       </li>
                     ))}
                   </ul>
                 </section>
 
-                <section className="sw-overview-section">
-                  <h3 className="sw-list-heading">Priority Flights</h3>
-                  <FlightFeedList
-                    flights={recentFlights}
-                    selectedId={selectedId}
-                    onSelect={onSelect}
-                  />
+                <section className="bg-white/5 border border-white/5 rounded-xl overflow-hidden flex flex-col">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 p-4 border-b border-white/5">
+                    Priority Flights
+                  </h3>
+                  <ErrorBoundary label="Priority flights">
+                    <FlightFeedList
+                      flights={recentFlights}
+                      selectedId={selectedId}
+                      onSelect={onSelect}
+                    />
+                  </ErrorBoundary>
                 </section>
-              </div>
+              </>
             )}
           </Tabs.Content>
 
+          {/* TAB: SEARCH FLIGHTS */}
           <Tabs.Content value="flights" className="h-full flex flex-col outline-none">
             {isLoading && totalFlights === 0 ? (
-              <FeedSkeleton />
+              <div className="p-4">
+                <FeedSkeleton />
+              </div>
             ) : flights.length === 0 ? (
               <EmptyState
-                icon={<Search />}
+                icon={<Search className="w-8 h-8 opacity-20" />}
                 title="No matching flights"
                 detail={status === "error" ? "Flight feed is offline" : "Adjust active filters"}
               />
             ) : (
-              <section className="sw-overview-section">
-                <h3 className="sw-list-heading sw-list-heading-row">
-                  <span>Matched Flights</span>
-                  <span>{flights.length.toLocaleString()}</span>
-                </h3>
-                <FlightFeedList
-                  flights={flights.slice(0, 80)}
-                  selectedId={selectedId}
-                  onSelect={onSelect}
-                />
-              </section>
+              <div className="flex-1 min-h-0 flex flex-col">
+                <div className="flex justify-between items-center p-4 border-b border-white/5 bg-white/[0.02]">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+                    Matched Flights
+                  </span>
+                  <span className="text-xs font-mono font-medium text-blue-400">
+                    {flights.length.toLocaleString()}
+                  </span>
+                </div>
+                <ErrorBoundary label="Flight list">
+                  <FlightFeedList
+                    flights={flights}
+                    selectedId={selectedId}
+                    onSelect={onSelect}
+                    virtualized
+                  />
+                </ErrorBoundary>
+              </div>
             )}
           </Tabs.Content>
 
-          <Tabs.Content value="anomalies" className="h-full flex flex-col outline-none">
-            {isLoading && anomalies.length === 0 ? (
-              <FeedSkeleton />
-            ) : anomalies.length === 0 ? (
-              <EmptyState
-                icon={<AlertTriangle />}
-                title={activeFilterCount > 0 ? "No matching anomalies" : "No active anomalies"}
-                detail={status === "error" ? "Flight feed is offline" : "Monitoring is active"}
-              />
-            ) : (
-              <ul className="sw-feed-list p-3">
-                {anomalies.map((anomaly) => {
-                  const sev = topSeverity(anomaly.anomalies);
-                  const isSelected = selectedId === anomaly.icao24;
-                  const primary = anomaly.anomalies[0];
-                  const Icon = anomalyIcons[primary.type];
-                  const sc = sevClass[sev] ?? "low";
-                  const airline = airlineFromCallsign(anomaly.callsign);
+          {/* TAB: ANOMALIES */}
+          <Tabs.Content
+            value="anomalies"
+            className="h-full flex flex-col outline-none overflow-hidden"
+          >
+            {/* Tactical anomaly filters */}
+            <div className="flex items-center gap-3 p-4 bg-emerald-950/20 border-b border-emerald-500/10 shrink-0">
+              <div className="flex-1 min-w-0">
+                <label className="text-[9px] font-bold uppercase tracking-widest text-emerald-400/60 block mb-1.5">
+                  Anomaly Type
+                </label>
+                <select
+                  value={filters.anomalyType || "all"}
+                  onChange={(e) =>
+                    onFiltersChange((curr) => ({ ...curr, anomalyType: e.target.value }))
+                  }
+                  className="w-full bg-zinc-950 border border-emerald-500/20 text-emerald-100 text-xs rounded-md px-2 py-1.5 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 transition-shadow appearance-none"
+                >
+                  <option value="all">All Types</option>
+                  {Object.entries(ANOMALY_TYPE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="text-[9px] font-bold uppercase tracking-widest text-emerald-400/60 block mb-1.5">
+                  Min Severity
+                </label>
+                <select
+                  value={filters.severity || "all"}
+                  onChange={(e) =>
+                    onFiltersChange((curr) => ({
+                      ...curr,
+                      severity: e.target.value as SeverityFilter,
+                    }))
+                  }
+                  className="w-full bg-zinc-950 border border-emerald-500/20 text-emerald-100 text-xs rounded-md px-2 py-1.5 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 transition-shadow appearance-none"
+                >
+                  {SEVERITY_FILTERS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
-                  return (
-                    <li key={`${anomaly.icao24}-${anomaly.detectedAt}`}>
-                      <button
-                        type="button"
-                        onClick={() => onSelect(anomaly.icao24)}
-                        className={`sw-feed-card ${isSelected ? "selected" : ""}`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className={`sw-feed-icon ${sc}`}>
-                              <Icon />
-                            </span>
-                            <span className="sw-feed-title">{primary.label}</span>
-                          </div>
-                          <span className={`sw-severity ${sc}`}>{sev}</span>
-                        </div>
+            <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
+              {isLoading && anomalies.length === 0 ? (
+                <div className="p-4">
+                  <FeedSkeleton />
+                </div>
+              ) : (
+                (() => {
+                  const filteredAnomalies = anomalies.filter((anomaly) => {
+                    if (filters.anomalyType && filters.anomalyType !== "all") {
+                      if (!anomaly.anomalies.some((a) => a.type === filters.anomalyType))
+                        return false;
+                    }
+                    if (filters.severity && filters.severity !== "all") {
+                      const sev = topSeverity(anomaly.anomalies);
+                      const severityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+                      const minLevel = severityOrder[filters.severity as Severity] || 0;
+                      const currentLevel = severityOrder[sev as Severity] || 0;
+                      if (currentLevel < minLevel) return false;
+                    }
+                    return true;
+                  });
 
-                        <div className="sw-feed-meta strong">
-                          <span className="sw-feed-number">
-                            {anomaly.callsign?.trim() || "UNKNOWN"}
-                          </span>
-                          <span>{relativeTime(anomaly.detectedAt)} ago</span>
-                        </div>
+                  return filteredAnomalies.length === 0 ? (
+                    <EmptyState
+                      icon={<AlertTriangle className="w-8 h-8 opacity-20 text-emerald-400" />}
+                      title={
+                        activeFilterCount > 0 ? "No matching anomalies" : "No active anomalies"
+                      }
+                      detail={
+                        status === "error" ? "Flight feed is offline" : "Monitoring is active"
+                      }
+                    />
+                  ) : (
+                    <>
+                      <div className="flex justify-end px-4 py-2 border-b border-white/5">
+                        <button
+                          type="button"
+                          onClick={() => exportAnomaliesCsv(filteredAnomalies)}
+                          className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 px-2 py-1 rounded transition-colors"
+                        >
+                          Export CSV
+                        </button>
+                      </div>
+                      <ul className="divide-y divide-white/5">
+                        {filteredAnomalies.map((anomaly) => {
+                          const sev = topSeverity(anomaly.anomalies);
+                          const isSelected = selectedId === anomaly.icao24;
+                          const primary = anomaly.anomalies[0];
+                          const Icon = anomalyIcons[primary.type];
+                          const airline = airlineFromCallsign(anomaly.callsign);
+                          const badgeColor = sevColors[sev] ?? sevColors.low;
+                          const iconColor = sevIconColors[sev] ?? sevIconColors.low;
 
-                        <div className="sw-feed-meta">
-                          <span className="truncate">{airline || anomaly.origin_country}</span>
-                          <span className="sw-feed-code">
-                            {countryCode(anomaly.origin_country)}
-                          </span>
-                        </div>
-
-                        {anomaly.anomalies.length > 1 && (
-                          <div className="sw-feed-note">
-                            +{anomaly.anomalies.length - 1} additional flag
-                            {anomaly.anomalies.length > 2 ? "s" : ""}
-                          </div>
-                        )}
-                      </button>
-                    </li>
+                          return (
+                            <li key={`${anomaly.icao24}-${anomaly.detectedAt}`}>
+                              <button
+                                type="button"
+                                onClick={() => onSelect(anomaly.icao24)}
+                                className={`w-full text-left p-4 hover:bg-white/5 focus:bg-white/5 outline-none transition-colors border-l-2 ${
+                                  isSelected
+                                    ? "border-emerald-500 bg-white/5"
+                                    : "border-transparent"
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <Icon className={`w-4 h-4 flex-shrink-0 ${iconColor}`} />
+                                    <span className="text-sm font-semibold text-white truncate">
+                                      {primary.label}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${badgeColor}`}
+                                  >
+                                    {sev}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs mb-1">
+                                  <span className="font-mono text-zinc-300 font-medium">
+                                    {anomaly.callsign?.trim() || "UNKNOWN"}
+                                  </span>
+                                  <span className="text-zinc-500">
+                                    {relativeTime(anomaly.detectedAt)} ago
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs text-zinc-500">
+                                  <span className="truncate pr-2">
+                                    {airline || anomaly.origin_country}
+                                  </span>
+                                  <span className="font-mono tracking-wider">
+                                    {countryCode(anomaly.origin_country)}
+                                  </span>
+                                </div>
+                                {anomaly.anomalies.length > 1 && (
+                                  <div className="mt-2 text-[10px] text-zinc-400 bg-white/5 rounded px-2 py-1 w-fit">
+                                    +{anomaly.anomalies.length - 1} additional flag
+                                    {anomaly.anomalies.length > 2 ? "s" : ""}
+                                  </div>
+                                )}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </>
                   );
-                })}
-              </ul>
-            )}
+                })()
+              )}
+            </div>
           </Tabs.Content>
         </div>
 
-        <div className="sw-sidebar-footer shrink-0">
-          <span>OpenSky Network</span>
-          <span>30s refresh</span>
+        {/* ── Footer ── */}
+        <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--sw-border)] bg-[var(--sw-surface-soft)] text-[10px] font-medium text-[var(--sw-muted)] uppercase tracking-widest shrink-0">
+          <span>OpenSky + CelesTrak</span>
+          <span>30s Air / 60s Orbit</span>
         </div>
       </Tabs.Root>
     </aside>
@@ -378,6 +800,36 @@ function GlobalDashboard({
 }
 
 export default memo(GlobalDashboard);
+
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
+function SummaryTile({
+  value,
+  label,
+  highlight,
+  warn,
+}: {
+  value: string;
+  label: string;
+  highlight?: boolean;
+  warn?: boolean;
+}) {
+  const valueColor = warn
+    ? "text-[var(--sw-amber)]"
+    : highlight
+      ? "text-[var(--sw-blue)]"
+      : "text-[var(--sw-text)]";
+  return (
+    <div className="bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] rounded-lg p-3 flex flex-col justify-center">
+      <span className={`text-lg font-mono font-medium leading-none mb-1 ${valueColor}`}>
+        {value}
+      </span>
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--sw-muted)]">
+        {label}
+      </span>
+    </div>
+  );
+}
 
 function FilterWorkbench({
   filters,
@@ -401,169 +853,192 @@ function FilterWorkbench({
   const legendClasses = useMemo(() => getClassesForLegend(), []);
 
   return (
-    <div className={`sw-filter-workbench ${showAdvanced ? "advanced-open" : ""}`}>
-      <div className="sw-search-row">
-        <label className="sw-search-box">
-          <Search />
+    <div className="mb-2">
+      <div className="flex gap-2 mb-3">
+        <label className="relative flex-1 flex items-center bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] rounded-md px-3 py-1.5 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50 transition-shadow">
+          <Search className="w-3.5 h-3.5 text-[var(--sw-muted)] mr-2 flex-shrink-0" />
           <input
             value={filters.query}
             onChange={(event) => setFilter("query", event.target.value)}
             placeholder="Target search"
             aria-label="Target search"
+            className="bg-transparent text-xs text-[var(--sw-text)] placeholder-[var(--sw-dim)] w-full outline-none"
           />
           {filters.query && (
-            <button type="button" onClick={() => setFilter("query", "")} aria-label="Clear search">
-              <X />
+            <button
+              type="button"
+              onClick={() => setFilter("query", "")}
+              className="text-[var(--sw-muted)] hover:text-[var(--sw-text)] ml-2"
+            >
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </label>
-        <div className="flex items-center gap-2">
+        <div className="flex gap-1">
           <button
             type="button"
-            className={`sw-filter-advanced-toggle ${showAdvanced ? "active" : ""}`}
+            className={`flex items-center justify-center w-8 h-8 rounded-md border transition-colors ${
+              showAdvanced
+                ? "bg-blue-500/10 border-blue-500/30 text-blue-400"
+                : "bg-[var(--sw-surface-soft)] border-[var(--sw-border)] text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)]"
+            }`}
             onClick={() => setShowAdvanced(!showAdvanced)}
-            title={showAdvanced ? "Hide advanced filters" : "Show advanced filters"}
+            title="Toggle advanced filters"
           >
-            <SlidersHorizontal />
-            <span>Filters</span>
+            <SlidersHorizontal className="w-3.5 h-3.5" />
           </button>
           <button
             type="button"
-            className="sw-filter-clear"
+            className="flex items-center justify-center w-8 h-8 rounded-md bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] text-[var(--sw-muted)] hover:text-[var(--sw-rose)] hover:bg-[var(--sw-danger-soft)] disabled:opacity-30 disabled:pointer-events-none transition-colors"
             onClick={onClearFilters}
             disabled={activeFilterLabels.length === 0}
+            title="Clear filters"
           >
-            <Filter />
-            Clear
+            <Filter className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      <div className={`sw-advanced-filters ${showAdvanced ? "visible" : "hidden"}`}>
-        <div className="sw-filter-mode-grid" aria-label="Flight mode filter">
-          {FLIGHT_FILTER_MODES.map((item) => (
-            <button
-              type="button"
-              key={item.value}
-              className={filters.mode === item.value ? "active" : ""}
-              onClick={() => setFilter("mode", item.value as FlightFilterMode)}
+      {showAdvanced && (
+        <div className="bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] rounded-lg p-3 mb-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="grid grid-cols-2 bg-[var(--sw-surface-strong)] rounded p-1 gap-1 mb-4 border border-[var(--sw-border)]">
+            {FLIGHT_FILTER_MODES.map((item) => (
+              <button
+                type="button"
+                key={item.value}
+                className={`text-[10px] font-bold uppercase tracking-wider py-1.5 rounded transition-colors ${
+                  filters.mode === item.value
+                    ? "bg-[var(--sw-surface-hover)] text-[var(--sw-text)]"
+                    : "text-[var(--sw-muted)] hover:text-[var(--sw-text)] hover:bg-[var(--sw-surface-hover)]"
+                }`}
+                onClick={() => setFilter("mode", item.value as FlightFilterMode)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <FilterSelect
+              label="Class"
+              value={filters.aircraftClass}
+              onChange={(v) => setFilter("aircraftClass", v)}
             >
-              {item.label}
-            </button>
+              <option value="all">Any class</option>
+              {legendClasses.map((cls) => (
+                <option key={cls.key} value={cls.key}>
+                  {cls.label}
+                </option>
+              ))}
+            </FilterSelect>
+
+            <FilterSelect
+              label="Country"
+              value={filters.country}
+              onChange={(v) => setFilter("country", v)}
+            >
+              <option value="all">Any country</option>
+              {countryOptions.map(([country, count]) => (
+                <option key={country} value={country}>
+                  {country} ({count})
+                </option>
+              ))}
+            </FilterSelect>
+
+            <FilterSelect
+              label="Altitude"
+              value={filters.altitudeBand}
+              onChange={(v) => setFilter("altitudeBand", v as AltitudeBand)}
+            >
+              {ALTITUDE_BANDS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </FilterSelect>
+
+            <FilterSelect
+              label="Speed"
+              value={filters.speedBand}
+              onChange={(v) => setFilter("speedBand", v as SpeedBand)}
+            >
+              {SPEED_BANDS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </FilterSelect>
+
+            <FilterSelect
+              label="Vertical"
+              value={filters.verticalBand}
+              onChange={(v) => setFilter("verticalBand", v as VerticalBand)}
+            >
+              {VERTICAL_BANDS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </FilterSelect>
+
+            <FilterSelect
+              label="Severity"
+              value={filters.severity}
+              onChange={(v) => setFilter("severity", v as SeverityFilter)}
+            >
+              {SEVERITY_FILTERS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </FilterSelect>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 border-t border-[var(--sw-border)] pt-4">
+            <RangeInput
+              label="Min alt"
+              value={filters.minAltitudeFt}
+              suffix="ft"
+              onChange={(v) => setFilter("minAltitudeFt", v)}
+            />
+            <RangeInput
+              label="Max alt"
+              value={filters.maxAltitudeFt}
+              suffix="ft"
+              onChange={(v) => setFilter("maxAltitudeFt", v)}
+            />
+            <RangeInput
+              label="Min spd"
+              value={filters.minSpeedKt}
+              suffix="kt"
+              onChange={(v) => setFilter("minSpeedKt", v)}
+            />
+            <RangeInput
+              label="Max spd"
+              value={filters.maxSpeedKt}
+              suffix="kt"
+              onChange={(v) => setFilter("maxSpeedKt", v)}
+            />
+          </div>
+        </div>
+      )}
+
+      {activeFilterLabels.length > 0 && !showAdvanced && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+          <SlidersHorizontal className="w-3 h-3 text-[var(--sw-muted)] mr-1" />
+          {activeFilterLabels.slice(0, 4).map((label) => (
+            <span
+              key={label}
+              className="px-1.5 py-0.5 bg-[var(--sw-surface-hover)] text-[var(--sw-text)] text-[10px] rounded border border-[var(--sw-border)]"
+            >
+              {label}
+            </span>
           ))}
-        </div>
-
-        <div className="sw-filter-grid">
-          <FilterSelect
-            label="Class"
-            value={filters.aircraftClass}
-            onChange={(value) => setFilter("aircraftClass", value)}
-          >
-            <option value="all">Any class</option>
-            {legendClasses.map((cls) => (
-              <option key={cls.key} value={cls.key}>
-                {cls.label}
-              </option>
-            ))}
-          </FilterSelect>
-
-          <FilterSelect
-            label="Country"
-            value={filters.country}
-            onChange={(value) => setFilter("country", value)}
-          >
-            <option value="all">Any country</option>
-            {countryOptions.map(([country, count]) => (
-              <option key={country} value={country}>
-                {country} ({count})
-              </option>
-            ))}
-          </FilterSelect>
-
-          <FilterSelect
-            label="Altitude"
-            value={filters.altitudeBand}
-            onChange={(value) => setFilter("altitudeBand", value as AltitudeBand)}
-          >
-            {ALTITUDE_BANDS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </FilterSelect>
-
-          <FilterSelect
-            label="Speed"
-            value={filters.speedBand}
-            onChange={(value) => setFilter("speedBand", value as SpeedBand)}
-          >
-            {SPEED_BANDS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </FilterSelect>
-
-          <FilterSelect
-            label="Vertical"
-            value={filters.verticalBand}
-            onChange={(value) => setFilter("verticalBand", value as VerticalBand)}
-          >
-            {VERTICAL_BANDS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </FilterSelect>
-
-          <FilterSelect
-            label="Severity"
-            value={filters.severity}
-            onChange={(value) => setFilter("severity", value as SeverityFilter)}
-          >
-            {SEVERITY_FILTERS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </FilterSelect>
-        </div>
-
-        <div className="sw-filter-range-grid">
-          <RangeInput
-            label="Min alt"
-            value={filters.minAltitudeFt}
-            suffix="ft"
-            onChange={(value) => setFilter("minAltitudeFt", value)}
-          />
-          <RangeInput
-            label="Max alt"
-            value={filters.maxAltitudeFt}
-            suffix="ft"
-            onChange={(value) => setFilter("maxAltitudeFt", value)}
-          />
-          <RangeInput
-            label="Min spd"
-            value={filters.minSpeedKt}
-            suffix="kt"
-            onChange={(value) => setFilter("minSpeedKt", value)}
-          />
-          <RangeInput
-            label="Max spd"
-            value={filters.maxSpeedKt}
-            suffix="kt"
-            onChange={(value) => setFilter("maxSpeedKt", value)}
-          />
-        </div>
-      </div>
-
-      {activeFilterLabels.length > 0 && (
-        <div className="sw-filter-chips" aria-label="Active filters">
-          <SlidersHorizontal />
-          {activeFilterLabels.slice(0, 5).map((label) => (
-            <span key={label}>{label}</span>
-          ))}
-          {activeFilterLabels.length > 5 && <span>+{activeFilterLabels.length - 5}</span>}
+          {activeFilterLabels.length > 4 && (
+            <span className="text-[10px] text-[var(--sw-muted)] font-medium">
+              +{activeFilterLabels.length - 4}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -582,9 +1057,15 @@ function FilterSelect({
   children: ReactNode;
 }) {
   return (
-    <label className="sw-filter-select">
-      <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+    <label className="flex flex-col gap-1">
+      <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--sw-muted)]">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="bg-[var(--sw-surface-strong)] border border-[var(--sw-border)] text-[var(--sw-text)] text-xs rounded px-2 py-1.5 focus:outline-none focus:border-blue-500/50 appearance-none"
+      >
         {children}
       </select>
     </label>
@@ -603,14 +1084,17 @@ function RangeInput({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="sw-range-input">
-      <span>{label}</span>
+    <label className="flex items-center bg-[var(--sw-surface-strong)] border border-[var(--sw-border)] rounded px-2 py-1.5 focus-within:border-blue-500/50">
+      <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--sw-muted)] w-12 shrink-0">
+        {label}
+      </span>
       <input
         value={value}
         inputMode="numeric"
         onChange={(event) => onChange(event.target.value.replace(/[^\d.-]/g, ""))}
+        className="bg-transparent text-xs text-[var(--sw-text)] w-full outline-none text-right font-mono pr-1"
       />
-      <em>{suffix}</em>
+      <em className="text-[10px] text-[var(--sw-dim)] not-italic shrink-0">{suffix}</em>
     </label>
   );
 }
@@ -619,57 +1103,117 @@ function FlightFeedList({
   flights,
   selectedId,
   onSelect,
+  virtualized = false,
 }: {
   flights: Flight[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  virtualized?: boolean;
 }) {
-  return (
-    <ul className="sw-feed-list">
-      {flights.map((flight) => {
-        const isSelected = selectedId === flight.icao24;
-        const airline = airlineFromCallsign(flight.callsign);
-        const alt = altitudeFt(flight.baro_altitude ?? flight.geo_altitude);
-        const speed = speedKt(flight.velocity);
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: flights.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80, // Updated to match actual compact layout
+    overscan: 5,
+  });
 
-        return (
-          <li key={flight.icao24}>
-            <button
-              type="button"
-              onClick={() => onSelect(flight.icao24)}
-              className={`sw-feed-card ${isSelected ? "selected" : ""}`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className="sw-feed-title">
-                  {flight.callsign?.trim() || flight.icao24.toUpperCase()}
-                </span>
-                <span className="sw-feed-code">{countryCode(flight.origin_country)}</span>
+  if (virtualized) {
+    return (
+      <div
+        ref={parentRef}
+        className="flex-1 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10"
+      >
+        <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+          {virtualizer.getVirtualItems().map((item) => {
+            const flight = flights[item.index];
+            if (!flight) return null;
+            return (
+              <div
+                key={flight.icao24}
+                className="absolute top-0 left-0 w-full"
+                style={{ transform: `translateY(${item.start}px)`, height: `${item.size}px` }}
+              >
+                <FlightFeedCard flight={flight} selectedId={selectedId} onSelect={onSelect} />
               </div>
-              <div className="sw-feed-meta">
-                <span className="truncate">{airline || flight.origin_country}</span>
-                <span className="sw-feed-number">{flight.on_ground ? "GROUND" : "AIRBORNE"}</span>
-              </div>
-              <div className="sw-feed-meta strong">
-                <span>{fmt(alt, { suffix: " ft", digits: 0 })}</span>
-                <span className="sw-feed-number">{fmt(speed, { suffix: " kt", digits: 0 })}</span>
-              </div>
-            </button>
-          </li>
-        );
-      })}
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ul className="divide-y divide-[var(--sw-border)]">
+      {flights.map((flight) => (
+        <li key={flight.icao24}>
+          <FlightFeedCard flight={flight} selectedId={selectedId} onSelect={onSelect} />
+        </li>
+      ))}
     </ul>
+  );
+}
+
+function FlightFeedCard({
+  flight,
+  selectedId,
+  onSelect,
+}: {
+  flight: Flight;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const isSelected = selectedId === flight.icao24;
+  const airline = airlineFromCallsign(flight.callsign);
+  const alt = altitudeFt(flight.baro_altitude ?? flight.geo_altitude);
+  const speed = speedKt(flight.velocity);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(flight.icao24)}
+      className={`w-full text-left px-4 py-3 hover:bg-[var(--sw-surface-hover)] focus:bg-[var(--sw-surface-hover)] outline-none transition-colors border-l-2 ${
+        isSelected ? "border-blue-500 bg-[var(--sw-surface-hover)]" : "border-transparent"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <span className="text-sm font-bold font-mono text-[var(--sw-text)] tracking-tight">
+          {flight.callsign?.trim() || flight.icao24.toUpperCase()}
+        </span>
+        <span className="text-[10px] font-mono bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] px-1.5 py-0.5 rounded text-[var(--sw-muted)] tracking-wider">
+          {countryCode(flight.origin_country)}
+        </span>
+      </div>
+      <div className="flex justify-between items-center text-xs text-[var(--sw-muted)] mb-1.5">
+        <span className="truncate pr-2 text-[var(--sw-text)]">
+          {airline || flight.origin_country}
+        </span>
+        <span
+          className={`text-[9px] font-bold uppercase tracking-wider ${flight.on_ground ? "text-amber-500" : "text-blue-400"}`}
+        >
+          {flight.on_ground ? "GND" : "AIR"}
+        </span>
+      </div>
+      <div className="flex justify-between items-center text-xs font-mono font-medium text-[var(--sw-dim)]">
+        <span>{fmt(alt, { suffix: " ft", digits: 0 })}</span>
+        <span className="text-[var(--sw-text)]">{fmt(speed, { suffix: " kt", digits: 0 })}</span>
+      </div>
+    </button>
   );
 }
 
 function FeedSkeleton() {
   return (
-    <div className="sw-feed-loading">
-      {Array.from({ length: 5 }).map((_, index) => (
-        <div className="sw-feed-skeleton" key={index}>
-          <span />
-          <div>
-            <span />
-            <span />
+    <div className="flex flex-col divide-y divide-[var(--sw-border)] w-full">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div key={index} className="px-4 py-3 w-full animate-pulse flex flex-col gap-2">
+          <div className="flex justify-between">
+            <div className="h-4 w-20 bg-[var(--sw-surface-soft)] rounded" />
+            <div className="h-4 w-8 bg-[var(--sw-surface-hover)] rounded" />
+          </div>
+          <div className="flex justify-between">
+            <div className="h-3 w-32 bg-[var(--sw-surface-soft)] rounded" />
+            <div className="h-3 w-10 bg-[var(--sw-surface-soft)] rounded" />
           </div>
         </div>
       ))}
@@ -679,10 +1223,12 @@ function FeedSkeleton() {
 
 function EmptyState({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
   return (
-    <div className="sw-empty-state">
+    <div className="flex flex-col items-center justify-center h-full p-8 text-center text-[var(--sw-muted)] gap-3">
       {icon}
-      <span>{title}</span>
-      <small>{detail}</small>
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-semibold text-[var(--sw-text)]">{title}</span>
+        <span className="text-xs">{detail}</span>
+      </div>
     </div>
   );
 }

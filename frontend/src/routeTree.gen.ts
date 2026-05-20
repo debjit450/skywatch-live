@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiSatellitesRouteImport } from './routes/api/satellites'
 import { Route as ApiPhotoRouteImport } from './routes/api/photo'
 import { Route as ApiFlightsRouteImport } from './routes/api/flights'
 import { Route as ApiFlightTrackRouteImport } from './routes/api/flight-track'
@@ -18,6 +19,11 @@ import { Route as ApiEnrichmentRouteImport } from './routes/api/enrichment'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSatellitesRoute = ApiSatellitesRouteImport.update({
+  id: '/api/satellites',
+  path: '/api/satellites',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPhotoRoute = ApiPhotoRouteImport.update({
@@ -47,6 +53,7 @@ export interface FileRoutesByFullPath {
   '/api/flight-track': typeof ApiFlightTrackRoute
   '/api/flights': typeof ApiFlightsRoute
   '/api/photo': typeof ApiPhotoRoute
+  '/api/satellites': typeof ApiSatellitesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByTo {
   '/api/flight-track': typeof ApiFlightTrackRoute
   '/api/flights': typeof ApiFlightsRoute
   '/api/photo': typeof ApiPhotoRoute
+  '/api/satellites': typeof ApiSatellitesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,6 +70,7 @@ export interface FileRoutesById {
   '/api/flight-track': typeof ApiFlightTrackRoute
   '/api/flights': typeof ApiFlightsRoute
   '/api/photo': typeof ApiPhotoRoute
+  '/api/satellites': typeof ApiSatellitesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -71,6 +80,7 @@ export interface FileRouteTypes {
     | '/api/flight-track'
     | '/api/flights'
     | '/api/photo'
+    | '/api/satellites'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -78,6 +88,7 @@ export interface FileRouteTypes {
     | '/api/flight-track'
     | '/api/flights'
     | '/api/photo'
+    | '/api/satellites'
   id:
     | '__root__'
     | '/'
@@ -85,6 +96,7 @@ export interface FileRouteTypes {
     | '/api/flight-track'
     | '/api/flights'
     | '/api/photo'
+    | '/api/satellites'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -93,6 +105,7 @@ export interface RootRouteChildren {
   ApiFlightTrackRoute: typeof ApiFlightTrackRoute
   ApiFlightsRoute: typeof ApiFlightsRoute
   ApiPhotoRoute: typeof ApiPhotoRoute
+  ApiSatellitesRoute: typeof ApiSatellitesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -102,6 +115,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/satellites': {
+      id: '/api/satellites'
+      path: '/api/satellites'
+      fullPath: '/api/satellites'
+      preLoaderRoute: typeof ApiSatellitesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/photo': {
@@ -141,6 +161,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFlightTrackRoute: ApiFlightTrackRoute,
   ApiFlightsRoute: ApiFlightsRoute,
   ApiPhotoRoute: ApiPhotoRoute,
+  ApiSatellitesRoute: ApiSatellitesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
