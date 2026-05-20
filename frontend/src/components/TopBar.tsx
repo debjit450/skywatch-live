@@ -180,7 +180,7 @@ function TopBar({
             <StatusBadge tone={statusTone} label={statusLabel} isLive={statusTone === "good"} />
           </div>
           <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest truncate">
-            Global Surveillance
+            Global Airspace Intelligence
           </span>
         </div>
       </div>
