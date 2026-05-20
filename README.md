@@ -1,5 +1,5 @@
-# 🛰️ SkyWatch Live™
-### Enterprise-Grade Airspace Surveillance, Space Situational Awareness & Temporal-Spatial Anomaly Detection Platform
+# 🛰️ SkyWatch Live
+### Airspace Intelligence, Space Situational Awareness & Temporal-Spatial Anomaly Detection Platform
 
 <div align="center">
 
@@ -15,11 +15,9 @@
 
 ---
 
-## 🖥️ Platform Mission & Operational Intent
+## 🖥️ Platform Overview
 
-**SkyWatch Live™** is a high-performance tactical intelligence platform designed for civil and military airspace surveillance, orbital tracking, and aviation risk mitigation. By combining telemetry ingestion with spatial-temporal predictive machine learning models, SkyWatch Live™ parses high-density global ADS-B state vectors, propagates satellite footprints via orbital mechanics equations, overlays real-time FAA flight restrictions, and forecasts trajectory anomalies in real-time.
-
-The platform serves as a critical decision-support interface for air traffic management, security personnel, and aerospace operators, delivering micro-second telemetry validation, automated geofence auditing, and explainable AI anomaly diagnostics.
+**SkyWatch Live** is a platform for airspace surveillance, orbital tracking, and anomaly detection. It combines telemetry ingestion with spatial-temporal machine learning models, parsing ADS-B state vectors, propagating satellite footprints via orbital mechanics, overlaying FAA flight restrictions, and forecasting trajectory anomalies.
 
 <div align="center">
   <img src="frontend/public/showcase/skywatch.png" alt="SkyWatch Live - Airspace Surveillance Dashboard" width="100%" style="border-radius: 8px;" />
@@ -47,7 +45,7 @@ Tested telemetry ingestion and processing benchmarks under continuous operationa
 ### 🛰️ Space Situational Awareness (SSA) & Orbital Mechanics
 *   **TLE Ingestion**: Dynamically ingests Two-Line Element (TLE) datasets from CelesTrak for active satellite constellations.
 *   **SGP4 Propagation**: Executes real-time analytical orbital coordinate projection and path tracking using SGP4 mathematical models.
-*   **Sensor Coverage Swaths**: Computes and overlays sensor footprints and swaths directly onto the tactical map layout.
+*   **Sensor Coverage Swaths**: Computes and overlays sensor footprints and swaths directly onto the map layout.
 
 ### 🛡️ Airspace Constraints & Geopolitical Threat Mitigation
 *   **Temporary Flight Restrictions (TFR)**: Automatically pulls and caches live FAA airspace restriction datasets, mapping circular hazards and custom exclusion polygons.
@@ -66,7 +64,7 @@ Tested telemetry ingestion and processing benchmarks under continuous operationa
 
 ## 🏗️ System Architecture
 
-SkyWatch Live™ uses an event-driven, microservice-based architecture to handle high-frequency telemetry streaming, automated machine learning inferences, and asynchronous tasks:
+SkyWatch Live uses an event-driven architecture to handle telemetry streaming, machine learning inferences, and asynchronous tasks:
 
 ```mermaid
 flowchart TD
@@ -94,7 +92,7 @@ flowchart TD
     end
 
     subgraph Client Application [Vite / React Dashboard]
-        FE[Tactical Surveillance Map]
+        FE[Surveillance Map]
         WID[Alert & Observability Dashboard]
     end
 
@@ -206,7 +204,7 @@ All core backend endpoints are versioned under `/api/v1/` and expose the followi
 *   `GET /api/v1/airspace/tfr/` — Pulls active FAA Temporary Flight Restrictions geofences.
 *   `GET /api/v1/weather/metar/` — Queries raw and parsed METAR telemetry for target airports.
 
-### 🧠 Tactical Alerts, Anomalies & Configuration
+### 🧠 Alerts, Anomalies & Configuration
 *   `GET /api/v1/anomalies/` — Streams active spatial-temporal anomalies.
 *   `GET /api/v1/anomalies/history/` — Queries resolved anomalies.
 *   `GET /api/v1/anomalies/<id>/explanation/` — Generates explainable AI JSON diagnostics detailing the anomaly score composition.
@@ -233,10 +231,10 @@ All core backend endpoints are versioned under `/api/v1/` and expose the followi
 
 The application supports two operational deployment profiles:
 
-| Operational Profile | Core Infrastructure | Target Use Case & Operational Impact |
+| Operational Profile | Core Infrastructure | Description |
 | :--- | :--- | :--- |
-| **`frontend-only`** | React Application Only | Feeds are proxied directly using serverless TanStack Start API endpoints. Renders simulated/cached telemetry. Ideal for UI testing, demos, or offline structural reviews. |
-| **`full-stack`** | Daphne + Celery + Redis + PostgreSQL | Full operations. Enables background ML scoring, automated route assembly, FAA TFR caching, and live WebSocket telemetry streams. **Required for production surveillance.** |
+| **`frontend-only`** | React Application Only | Feeds are proxied using TanStack Start API endpoints. Renders simulated/cached telemetry. |
+| **`full-stack`** | Daphne + Celery + Redis + PostgreSQL | Enables background ML scoring, automated route assembly, FAA TFR caching, and live WebSocket telemetry streams. |
 
 ---
 
@@ -445,7 +443,7 @@ To detect complex anomalies, raw flight state telemetry is expanded into a **30-
 
 ## 📊 Observability & Telemetry Metrics
 
-SkyWatch Live™ exposes a `/metrics` endpoint instrumented for Prometheus scraping. Key exported operational metrics include:
+SkyWatch Live exposes a `/metrics` endpoint for Prometheus. Key exported metrics include:
 
 | Metric Name | Type | Description |
 | :--- | :--- | :--- |
@@ -460,7 +458,7 @@ SkyWatch Live™ exposes a `/metrics` endpoint instrumented for Prometheus scrap
 
 ## 🚀 Production Deployment Runbook
 
-For high-availability, continuous airspace surveillance, organize your stack using process isolation:
+For production environments, organize the stack using process isolation:
 
 ### ⚙️ Recommended Topography
 
@@ -550,7 +548,7 @@ Confirm that `VITE_SKYWATCH_API_BASE` is pointing to the correct port (usually `
 
 ## ⚠️ System Operational Limitations
 
-Operators and developers should note the following core operational and hardware constraints within the platform:
+Note the following operational and hardware constraints within the platform:
 
 1. **Redis Scalability Fallback**: When Redis is offline, the system degrades to a non-distributed `InMemoryChannelLayer` and local memory cache. WebSockets and cached states will not sync across horizontally scaled backend servers in this fallback state.
 2. **OpenSky Telemetry Throttling**: The public OpenSky API enforces strict request rate limits. In local dev, the ingestion worker is configured for a 15-second polling window to prevent IP banning. Upgrading to a registered airline/operator API tier is required for sub-second telemetry updates.
@@ -561,4 +559,4 @@ Operators and developers should note the following core operational and hardware
 7. **Surveillance & Ingest Feed Limitations**:
    * **FAA Radar & Space-based ADS-B**: Oceanic satellite telemetry and military secondary radar stubs require commercial/defense licensing keys and secure VPN endpoints. The default developer profile runs mock models for these data streams.
    * **Aeronautical NOTAM Feeds**: Official live NOTAM (Notice to Air Missions) distribution feeds are gated behind paid subscriptions and state agency credentials. The platform uses public FAA TFR geofences and AWC SIGMET endpoints as free, baseline airspace warnings.
-   * **Encrypted/Tactical Transponders**: Low-altitude UAT (978 MHz) and FLARM volunteer networks (OGN) are dependent on community-receiver proximity and cannot provide guaranteed or continuous global tactical coverage. Encrypted transponders (such as military Mode-5 or Link-16) are excluded from public state vectors.
+   * **Encrypted/Tactical Transponders**: Low-altitude UAT (978 MHz) and FLARM volunteer networks (OGN) are dependent on community-receiver proximity and cannot provide guaranteed or continuous global coverage. Encrypted transponders (such as military Mode-5 or Link-16) are excluded from public state vectors.
