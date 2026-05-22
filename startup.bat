@@ -25,7 +25,7 @@ if "%choice%"=="1" (
 ) else if "%choice%"=="4" (
     call npm run dev
 ) else if "%choice%"=="5" (
-    call npm run backend-dev
+    call npm run backend:dev
 ) else if "%choice%"=="6" (
     exit /b 0
 ) else (

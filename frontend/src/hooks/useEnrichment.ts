@@ -3,6 +3,26 @@ import type { EnrichmentData } from "@/lib/enrichment-types";
 
 const clientCache = new Map<string, EnrichmentData>();
 
+function cacheCoordinatePart(lat: number | null, lon: number | null): string {
+  if (lat === null || lon === null) return "no-position";
+  return `${lat.toFixed(2)},${lon.toFixed(2)}`;
+}
+
+function enrichmentCacheKey(
+  icao24: string,
+  callsign: string,
+  lat: number | null,
+  lon: number | null,
+  registration: string | null,
+): string {
+  return [
+    icao24.toLowerCase(),
+    (callsign || "").toUpperCase(),
+    cacheCoordinatePart(lat, lon),
+    registration?.toUpperCase() ?? "",
+  ].join("|");
+}
+
 export function useEnrichment(
   icao24: string | null,
   callsign: string | null,
@@ -25,7 +45,7 @@ export function useEnrichment(
       lon: number | null,
       reg: string | null,
     ) => {
-      const cacheKey = `${ic.toLowerCase()}|${(cs || "").toUpperCase()}`;
+      const cacheKey = enrichmentCacheKey(ic, cs, lat, lon, reg);
       const cached = !anom && clientCache.get(cacheKey);
       if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) {
         setData(cached);

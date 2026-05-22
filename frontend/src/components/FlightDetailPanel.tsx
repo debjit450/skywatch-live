@@ -354,7 +354,7 @@ function FlightDetailPanel({
   style,
 }: Props) {
   const { airports } = useAirports();
-  const [now, setNow] = useState(() => Date.now());
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const [imageError, setImageError] = useState(false);
   const [terminalWeather, setTerminalWeather] = useState<{
     origin: WeatherMetar | null;
@@ -367,9 +367,21 @@ function FlightDetailPanel({
   }, [flight.icao24]);
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    const id = window.setInterval(() => setClockNow(Date.now()), 10_000);
     return () => window.clearInterval(id);
   }, []);
+
+  const panelAirports = useMemo(
+    () => airports.filter((airport) => airport.type !== "closed_airport"),
+    [airports],
+  );
+  const divertCandidateAirports = useMemo(
+    () =>
+      panelAirports.filter(
+        (airport) => airport.type === "large_airport" || airport.type === "medium_airport",
+      ),
+    [panelAirports],
+  );
 
   useEffect(() => {
     const origIcao = enrichment?.route?.origin?.icaoCode || enrichment?.route?.origin?.iataCode;
@@ -430,12 +442,8 @@ function FlightDetailPanel({
   const callsign = flight.callsign?.trim() || "UNKNOWN";
   const airline = airlineFromCallsign(flight.callsign);
   const rt = enrichment?.route ?? null;
-  const displayCallsign =
-    rt?.callsignIata && rt.callsignIata !== callsign
-      ? `${rt.callsignIata} / ${callsign}`
-      : callsign;
 
-  const prediction = predictFlightState(flight, now / 1000);
+  const prediction = predictFlightState(flight, clockNow / 1000);
   const altFt = altitudeFt(prediction.baroAltitude);
   const reportedAltFt = altitudeFt(flight.baro_altitude);
   const geoAltFt = altitudeFt(flight.geo_altitude);
@@ -445,7 +453,7 @@ function FlightDetailPanel({
   const fl = flightLevel(flight.baro_altitude);
   const climb = (flight.vertical_rate ?? 0) > 1;
   const descend = (flight.vertical_rate ?? 0) < -1;
-  const signalAgeSeconds = Math.max(0, Math.floor(now / 1000 - flight.last_contact));
+  const signalAgeSeconds = Math.max(0, Math.floor(clockNow / 1000 - flight.last_contact));
   const altDiffM =
     flight.baro_altitude !== null && flight.geo_altitude !== null
       ? flight.geo_altitude - flight.baro_altitude
@@ -568,7 +576,7 @@ function FlightDetailPanel({
 
   const enrichedLayovers = useMemo<PanelLayover[]>(() => {
     return (flightTrack?.layovers ?? []).map((layover, index) => {
-      const nearest = nearestAirportToPoint(airports, layover.lat, layover.lon);
+      const nearest = nearestAirportToPoint(panelAirports, layover.lat, layover.lon);
       const airport = nearest?.airport ?? null;
       const airportCode =
         layover.airportCode || (airport ? getAirportCode(airport) : "") || `STOP ${index + 1}`;
@@ -587,7 +595,7 @@ function FlightDetailPanel({
         airportCodes,
       };
     });
-  }, [airports, flightTrack?.layovers]);
+  }, [panelAirports, flightTrack?.layovers]);
 
   const physics = useMemo(() => {
     const v = flight.velocity;
@@ -622,8 +630,7 @@ function FlightDetailPanel({
     if (diff > 60 && progress.remaining > 50) {
       let nearest = null,
         minD = Infinity;
-      for (const a of airports) {
-        if (a.type !== "large_airport" && a.type !== "medium_airport") continue;
+      for (const a of divertCandidateAirports) {
         const d = gcDistanceKm(flight.latitude, flight.longitude, a.lat, a.lon);
         const brg = gcBearing(flight.latitude, flight.longitude, a.lat, a.lon);
         if (angleDiff(flight.true_track, brg) < 60 && d < minD) {
@@ -634,18 +641,32 @@ function FlightDetailPanel({
       return nearest ? `Possible divert → ${nearest.iata || nearest.icao}` : "Possible divert";
     }
     return null;
-  }, [flight.squawk, flight.latitude, flight.longitude, flight.true_track, progress, airports]);
+  }, [
+    flight.squawk,
+    flight.latitude,
+    flight.longitude,
+    flight.true_track,
+    progress,
+    divertCandidateAirports,
+  ]);
 
   const isEmergency = ["7500", "7600", "7700"].includes(flight.squawk || "");
+  const shouldShowRouteContext =
+    !isRouteLikelyIncorrect &&
+    (rt?.origin || rt?.destination || rt?.airline || rt?.callsignIata || enrichmentLoading);
+  const displayCallsign =
+    !isRouteLikelyIncorrect && rt?.callsignIata && rt.callsignIata !== callsign
+      ? `${rt.callsignIata} / ${callsign}`
+      : callsign;
 
   return (
     <div
       style={style}
       className="
-      fixed w-[460px] max-h-[550px]
+      sw-flight-detail-panel fixed w-[460px] max-h-[min(620px,calc(100svh-48px))]
       bg-[rgba(4,15,8,0.45)] border border-[var(--sw-border-strong)] rounded-2xl
       shadow-2xl ring-1 ring-[var(--sw-border)]
-      flex flex-col backdrop-blur-xl
+      flex flex-col backdrop-blur-md
       font-sans text-[var(--sw-text)] overflow-hidden
     "
     >
@@ -856,11 +877,7 @@ function FlightDetailPanel({
 
         <div className="p-3 space-y-3">
           {/* Route & Logistics */}
-          {(rt?.origin ||
-            rt?.destination ||
-            rt?.airline ||
-            rt?.callsignIata ||
-            enrichmentLoading) && (
+          {shouldShowRouteContext && (
             <Section title="Flight Plan & Route Context" icon={Navigation}>
               {enrichmentLoading && !rt ? (
                 <LoadingRow label="Fetching route intelligence" />
@@ -1437,7 +1454,10 @@ function Section({
   icon?: LucideIcon;
 }) {
   return (
-    <div className="bg-[var(--sw-surface-strong)] border border-[var(--sw-border)] rounded-xl p-4">
+    <div
+      data-heavy-section
+      className="bg-[var(--sw-surface-strong)] border border-[var(--sw-border)] rounded-xl p-4"
+    >
       <div className="flex items-center gap-2 mb-4">
         {Icon && <Icon className="w-4 h-4 text-[var(--sw-muted)] flex-shrink-0" />}
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--sw-text)]">

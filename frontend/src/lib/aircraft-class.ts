@@ -32,7 +32,16 @@ export interface AircraftClassInfo {
   glowColor: string;
   bgColor: string;
   borderColor: string;
-  iconType: "plane" | "helicopter" | "glider" | "uav" | "balloon" | "vehicle" | "jet";
+  iconType:
+    | "plane"
+    | "cargoPlane"
+    | "businessJet"
+    | "fighterJet"
+    | "helicopter"
+    | "glider"
+    | "uav"
+    | "balloon"
+    | "vehicle";
   priority: number;
 }
 
@@ -60,7 +69,7 @@ export const AIRCRAFT_CLASSES: Record<AircraftClass, AircraftClassInfo> = {
     glowColor: "rgba(245, 158, 11, 0.40)",
     bgColor: "rgba(245, 158, 11, 0.12)",
     borderColor: "rgba(245, 158, 11, 0.30)",
-    iconType: "plane",
+    iconType: "cargoPlane",
     priority: 4,
   },
   military: {
@@ -72,7 +81,7 @@ export const AIRCRAFT_CLASSES: Record<AircraftClass, AircraftClassInfo> = {
     glowColor: "rgba(239, 68, 68, 0.45)",
     bgColor: "rgba(239, 68, 68, 0.12)",
     borderColor: "rgba(239, 68, 68, 0.30)",
-    iconType: "jet",
+    iconType: "fighterJet",
     priority: 8,
   },
   general_aviation: {
@@ -108,7 +117,7 @@ export const AIRCRAFT_CLASSES: Record<AircraftClass, AircraftClassInfo> = {
     glowColor: "rgba(192, 132, 252, 0.40)",
     bgColor: "rgba(192, 132, 252, 0.12)",
     borderColor: "rgba(192, 132, 252, 0.30)",
-    iconType: "jet",
+    iconType: "businessJet",
     priority: 3,
   },
   glider: {

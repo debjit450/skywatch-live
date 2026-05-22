@@ -20,6 +20,11 @@ import type { SatelliteStatus } from "@/hooks/useSatellites";
 import { formatClock } from "@/lib/format";
 import type { Flight } from "@/lib/opensky";
 import { countByClass, getClassesForLegend } from "@/lib/aircraft-class";
+import {
+  MARKER_ICON_SVG_CONTENT,
+  MARKER_ICON_VIEW_BOX,
+  type SkywatchMarkerIconName,
+} from "./map/markerIcons";
 
 interface Props {
   flights: Flight[];
@@ -164,12 +169,14 @@ function TopBar({
       style={{
         right: isDashboardCollapsed ? "96px" : "412px",
       }}
-      className="fixed top-4 left-4 z-[2000] flex items-center justify-between h-14 px-4 bg-[rgba(4,15,8,0.45)] backdrop-blur-xl border border-[var(--sw-border-strong)] rounded-xl shadow-2xl transition-all duration-300 overflow-hidden"
+      className="fixed top-4 left-4 z-[2000] flex items-center justify-between h-14 px-4 bg-[rgba(4,15,8,0.45)] backdrop-blur-xl border border-[var(--sw-border-strong)] rounded-xl shadow-2xl transition-all duration-300 overflow-visible"
     >
       {/* Liquid glass ambient shimmers */}
-      <div className="absolute inset-0 w-full h-full pointer-events-none opacity-40 dark:opacity-65 bg-gradient-to-r from-transparent via-emerald-500/5 to-transparent dark:via-emerald-500/10 animate-pulse duration-[8000ms]" />
-      <div className="absolute -top-[10px] left-1/4 w-[120px] h-[20px] bg-emerald-400/20 dark:bg-emerald-400/40 rounded-full blur-[20px] pointer-events-none" />
-      <div className="absolute -top-[10px] right-1/4 w-[120px] h-[20px] bg-blue-400/20 dark:bg-blue-400/40 rounded-full blur-[20px] pointer-events-none" />
+      <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
+        <div className="absolute inset-0 w-full h-full opacity-40 dark:opacity-65 bg-gradient-to-r from-transparent via-emerald-500/5 to-transparent dark:via-emerald-500/10 animate-pulse duration-[8000ms]" />
+        <div className="absolute -top-[10px] left-1/4 w-[120px] h-[20px] bg-emerald-400/20 dark:bg-emerald-400/40 rounded-full blur-[20px]" />
+        <div className="absolute -top-[10px] right-1/4 w-[120px] h-[20px] bg-blue-400/20 dark:bg-blue-400/40 rounded-full blur-[20px]" />
+      </div>
 
       {/* ── Brand Identity ── */}
       <div className="flex items-center gap-2.5 min-w-0 pr-4 border-r border-white/20 dark:border-white/10 relative z-10 flex-shrink-0">
@@ -345,7 +352,7 @@ function TopBar({
                           className="flex items-center gap-3 text-xs"
                           title={cls.description}
                         >
-                          <Swatch color={cls.color} />
+                          <Swatch color={cls.color} shape={cls.iconType} />
                           <span
                             className={count > 0 ? "text-zinc-200 font-medium" : "text-zinc-600"}
                           >
@@ -558,22 +565,22 @@ const WEATHER_LEGEND = [
 ];
 
 const SATELLITE_LEGEND = [
-  { label: "Space Station", color: "#22c55e", shape: "filled" as const },
-  { label: "Visual / Bright", color: "#facc15", shape: "filled" as const },
-  { label: "Weather Sat", color: "#38bdf8", shape: "filled" as const },
-  { label: "Earth Resources", color: "#4ade80", shape: "filled" as const },
-  { label: "Galileo / Nav", color: "#c084fc", shape: "filled" as const },
-  { label: "Starlink", color: "#94a3b8", shape: "filled" as const },
-  { label: "OneWeb", color: "#60a5fa", shape: "filled" as const },
+  { label: "Space Station", color: "#22c55e", shape: "satellite" as const },
+  { label: "Visual / Bright", color: "#facc15", shape: "satellite" as const },
+  { label: "Weather Sat", color: "#38bdf8", shape: "satellite" as const },
+  { label: "Earth Resources", color: "#4ade80", shape: "satellite" as const },
+  { label: "Galileo / Nav", color: "#c084fc", shape: "satellite" as const },
+  { label: "Starlink", color: "#94a3b8", shape: "satellite" as const },
+  { label: "OneWeb", color: "#60a5fa", shape: "satellite" as const },
 ];
 
-function Swatch({
-  color,
-  shape = "filled",
-}: {
-  color: string;
-  shape?: "filled" | "ring" | "dot" | "square" | "route";
-}) {
+type SwatchShape = "filled" | "ring" | "dot" | "square" | "route" | SkywatchMarkerIconName;
+
+function isMarkerIconShape(shape: SwatchShape): shape is SkywatchMarkerIconName {
+  return shape in MARKER_ICON_SVG_CONTENT;
+}
+
+function Swatch({ color, shape = "filled" }: { color: string; shape?: SwatchShape }) {
   const size = shape === "dot" ? 6 : 10;
 
   if (shape === "route") {
@@ -587,6 +594,32 @@ function Swatch({
           flexShrink: 0,
         }}
       />
+    );
+  }
+
+  if (isMarkerIconShape(shape)) {
+    const svgContent = MARKER_ICON_SVG_CONTENT[shape].replaceAll("black", "currentColor");
+
+    return (
+      <span
+        style={{
+          display: "inline-flex",
+          width: 16,
+          height: 16,
+          alignItems: "center",
+          justifyContent: "center",
+          color,
+          flexShrink: 0,
+          filter: `drop-shadow(0 0 4px ${color}66)`,
+        }}
+      >
+        <svg
+          viewBox={MARKER_ICON_VIEW_BOX[shape]}
+          aria-hidden="true"
+          style={{ width: 16, height: 16, display: "block", fill: "currentColor" }}
+          dangerouslySetInnerHTML={{ __html: svgContent }}
+        />
+      </span>
     );
   }
 
