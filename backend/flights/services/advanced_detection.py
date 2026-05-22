@@ -3,10 +3,7 @@ Advanced detection rules for flight anomalies.
 
 Provides detection capabilities beyond basic threshold checks:
   - Circling / Loitering detection
-  - Trajectory deviation
   - Proximity alerts
-  - Geofence incursion (restricted airspace)
-  - Altitude bust detection
   - Behavioral profile deviation
 """
 
@@ -58,71 +55,6 @@ def _heading_diff(h1, h2):
     return d
 
 
-# ─── Restricted airspace zones (sample set — extend as needed) ────────────
-
-RESTRICTED_ZONES = [
-    # (name, lat, lon, radius_km, severity)
-    ("Washington DC SFRA", 38.8977, -77.0365, 55, "critical"),
-    ("Camp David P-40", 39.6480, -77.4650, 18, "critical"),
-    ("Area 51 R-4808", 37.2350, -115.8111, 42, "high"),
-    ("Pantex Plant", 35.3175, -101.5570, 18, "high"),
-    ("White Sands R-5107", 32.9500, -106.4200, 65, "high"),
-    ("Nellis Range R-4806", 37.0000, -115.5000, 55, "high"),
-    ("Edwards AFB R-2515", 34.9054, -117.8840, 45, "medium"),
-    ("Groom Lake R-4807", 37.2431, -115.7930, 30, "high"),
-    ("Kremlin TFR", 55.7520, 37.6175, 25, "critical"),
-    ("Beijing TFR", 39.9042, 116.4074, 30, "critical"),
-    ("Pyongyang TFR", 39.0392, 125.7625, 55, "critical"),
-    ("Buckingham Palace", 51.5014, -0.1419, 2.5, "high"),
-    ("Élysée Palace", 48.8704, 2.3167, 2.5, "high"),
-    ("Vatican City", 41.9029, 12.4534, 1.5, "high"),
-    ("Dimona Nuclear", 31.0036, 35.1444, 30, "critical"),
-]
-
-
-def detect_geofence(flight, now_epoch=None):
-    """
-    Check if aircraft is inside a restricted airspace zone.
-
-    Returns list of anomaly dicts.
-    """
-    on_ground = flight.get("on_ground", False)
-
-    if on_ground:
-        return []
-
-    raw_lat = flight.get("latitude")
-    raw_lon = flight.get("longitude")
-    if raw_lat is None or raw_lon is None:
-        return []
-
-    lat = _safe_float(raw_lat)
-    lon = _safe_float(raw_lon)
-    alt = _safe_float(flight.get("baro_altitude"))
-
-    anomalies = []
-    for name, z_lat, z_lon, radius_km, severity in RESTRICTED_ZONES:
-        dist = _haversine_km(lat, lon, z_lat, z_lon)
-        if dist <= radius_km:
-            # Only alert if airborne and within the zone
-            anomalies.append({
-                "type": "geofence",
-                "label": f"Restricted Airspace: {name}",
-                "severity": severity,
-                "confidence_score": min(98.0, 80.0 + (1 - dist / radius_km) * 20),
-                "details": {
-                    "zone_name": name,
-                    "zone_center": [z_lat, z_lon],
-                    "zone_radius_km": radius_km,
-                    "distance_km": round(dist, 2),
-                    "penetration_pct": round((1 - dist / radius_km) * 100, 1),
-                    "altitude_m": alt,
-                },
-            })
-
-    return anomalies
-
-
 def detect_circling(heading_history, now_epoch=None):
     """
     Detect circling/loitering from heading history.
@@ -154,7 +86,7 @@ def detect_circling(heading_history, now_epoch=None):
     if duration_s < 120:
         return []
 
-    # Circling: > 720° of heading change in < 10 minutes (two full circles)
+    # Circling: > 720 degrees of heading change in < 10 minutes (two full circles)
     if total_heading_change > 720:
         avg_turn_rate = total_heading_change / duration_s
         return [{
@@ -245,14 +177,14 @@ def detect_proximity(flight, other_flights, min_distance_nm=5.0, now_epoch=None)
         o_lon = _safe_float(o_raw_lon)
         o_alt = _safe_float(o_raw_alt)
 
-        # Quick lat/lon pre-filter (1° ≈ 111km)
+        # Quick lat/lon pre-filter (1 degree is roughly 111 km)
         if abs(lat - o_lat) > 0.5 or abs(lon - o_lon) > 0.5:
             continue
 
         dist_km = _haversine_km(lat, lon, o_lat, o_lon)
         alt_diff_m = abs(alt - o_alt)
 
-        # Horizontal within threshold AND vertical within 300m (≈1000ft)
+        # Horizontal within threshold AND vertical within 300m (roughly 1000ft)
         if dist_km <= min_distance_km and alt_diff_m < 300:
             dist_nm = dist_km / 1.852
             severity = "critical" if dist_nm < 2 else "high" if dist_nm < 3.5 else "medium"
@@ -310,9 +242,9 @@ def detect_behavioral_deviation(flight, profile, now_epoch=None):
     if vel_z > 3.5 or alt_z > 3.5:
         deviations = []
         if vel_z > 3.5:
-            deviations.append(f"speed {vel_z:.1f}σ from mean")
+            deviations.append(f"speed {vel_z:.1f} sigma from mean")
         if alt_z > 3.5:
-            deviations.append(f"altitude {alt_z:.1f}σ from mean")
+            deviations.append(f"altitude {alt_z:.1f} sigma from mean")
 
         anomalies.append({
             "type": "behavioral",
@@ -342,9 +274,6 @@ def detect_all_advanced(flight, other_flights=None, profile=None,
     Returns combined list of anomaly dicts.
     """
     anomalies = []
-
-    # Geofence check
-    anomalies.extend(detect_geofence(flight, now_epoch))
 
     # Proximity check (if peers provided)
     if other_flights:

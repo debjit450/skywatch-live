@@ -1,7 +1,7 @@
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
-@import "leaflet/dist/leaflet.css";
+@import "maplibre-gl/dist/maplibre-gl.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -195,6 +195,207 @@ body,
   background: #11131a !important;
   color: #e6e8ee !important;
   border-color: #1f2230 !important;
+}
+
+.maplibregl-map {
+  background: #030712;
+  font: inherit;
+}
+
+.maplibregl-canvas {
+  outline: none;
+}
+
+.maplibregl-ctrl-group {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 8px !important;
+  background: rgba(15, 23, 42, 0.82) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32) !important;
+  backdrop-filter: blur(16px);
+}
+
+.maplibregl-ctrl-group button {
+  background-color: transparent !important;
+}
+
+.maplibregl-ctrl-group button + button {
+  border-top-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.maplibregl-ctrl button .maplibregl-ctrl-icon {
+  filter: invert(1) opacity(0.85);
+}
+
+.maplibregl-ctrl-top-left {
+  top: 104px !important;
+  left: 10px !important;
+  z-index: 900 !important;
+}
+
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-scale {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(15, 23, 42, 0.72) !important;
+  color: #94a3b8 !important;
+  backdrop-filter: blur(12px);
+}
+
+.maplibregl-ctrl-attrib a {
+  color: #cbd5e1 !important;
+}
+
+.sw-deck-tooltip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1100;
+  display: grid;
+  max-width: min(320px, calc(100vw - 32px));
+  gap: 4px;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.9);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+  color: #e2e8f0;
+  padding: 10px 12px;
+  font-family:
+    "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.25;
+  backdrop-filter: blur(18px);
+}
+
+.sw-deck-tooltip strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sw-deck-tooltip span,
+.sw-deck-tooltip em {
+  min-width: 0;
+  overflow: hidden;
+  color: #94a3b8;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sw-deck-tooltip-weather {
+  width: min(380px, calc(100vw - 32px));
+  max-width: min(380px, calc(100vw - 32px));
+  border-color: rgba(59, 130, 246, 0.22);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(3, 7, 18, 0.9)),
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.18), transparent 50%);
+  padding: 0;
+  overflow: hidden;
+}
+
+.sw-weather-tooltip {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.sw-weather-tooltip-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sw-weather-tooltip-head > span {
+  display: grid;
+  gap: 3px;
+}
+
+.sw-weather-tooltip-head small {
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.sw-weather-tooltip-head b {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  border-radius: 7px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  padding: 5px 9px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.sw-weather-tooltip[data-category="IFR"] .sw-weather-tooltip-head b {
+  border-color: rgba(248, 113, 113, 0.36);
+  background: rgba(239, 68, 68, 0.14);
+  color: #fb7185;
+}
+
+.sw-weather-tooltip[data-category="LIFR"] .sw-weather-tooltip-head b {
+  border-color: rgba(217, 70, 239, 0.36);
+  background: rgba(217, 70, 239, 0.14);
+  color: #e879f9;
+}
+
+.sw-weather-tooltip[data-category="MVFR"] .sw-weather-tooltip-head b {
+  border-color: rgba(96, 165, 250, 0.36);
+  background: rgba(59, 130, 246, 0.14);
+  color: #60a5fa;
+}
+
+.sw-weather-tooltip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sw-weather-tooltip-grid span {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #94a3b8;
+  padding: 8px 10px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sw-weather-tooltip-grid strong {
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sw-weather-tooltip em {
+  display: block;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #94a3b8;
+  padding: 9px 10px;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: normal;
 }
 
 @keyframes sw-pulse {
@@ -6137,4 +6338,51 @@ body,
 .sw-modal-backdrop {
   background: rgba(3, 7, 18, 0.6) !important;
   backdrop-filter: blur(8px) saturate(140%) !important;
+}
+
+.sw-flight-detail-panel {
+  contain: layout paint style;
+  transform: translateZ(0);
+  will-change: transform;
+  isolation: isolate;
+}
+
+.sw-flight-detail-panel [data-heavy-section] {
+  content-visibility: auto;
+  contain-intrinsic-size: 260px;
+}
+
+.sw-flight-detail-panel img {
+  content-visibility: auto;
+}
+
+@supports (scrollbar-gutter: stable) {
+  .sw-flight-detail-panel {
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-flight-detail-panel *,
+  .sw-flight-path-container * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Map surface cleanup */
+.sw-app-shell,
+.theme-dark.sw-app-shell,
+.theme-light.sw-app-shell {
+  background: var(--sw-map-bg, #030712) !important;
+}
+
+.sw-map-stage,
+.maplibregl-map,
+.maplibregl-canvas-container {
+  background: var(--sw-map-bg, #030712) !important;
+}
+
+.sw-liquid-ambient-container {
+  display: none !important;
 }

@@ -162,7 +162,7 @@ Write-Host "  npm run dev-all"
 Write-Host ""
 Write-Host "Or start services separately:" -ForegroundColor $info
 Write-Host "  npm run dev"
-Write-Host "  npm run backend-dev"
+Write-Host "  npm run backend:dev"
 Write-Host ""
 Write-Host "Frontend: http://localhost:5173" -ForegroundColor $success
 Write-Host "Backend API: http://localhost:8000/api/v1/" -ForegroundColor $success

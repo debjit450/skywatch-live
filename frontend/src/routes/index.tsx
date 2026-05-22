@@ -211,6 +211,7 @@ function Index() {
   const [isFlightPanelMinimized, setIsFlightPanelMinimized] = useState(false);
   const [isDashboardCollapsed, setIsDashboardCollapsed] = useState(false);
   const [isFollowingSelected, setIsFollowingSelected] = useState(true);
+  const [isSelectedPathVisible, setIsSelectedPathVisible] = useState(true);
   const [focusKey, setFocusKey] = useState(0);
   const [selectedCountry, setSelectedCountry] = useState<string>("India");
   const [flightFilters, setFlightFilters] = useState<FlightFilters>(DEFAULT_FLIGHT_FILTERS);
@@ -244,13 +245,28 @@ function Index() {
     }
   }, []);
 
-  const handleSelect = useCallback((id: string | null) => {
-    setSelectedId(id);
-    setIsFlightPanelMinimized(false);
-    if (id) setIsFollowingSelected(true);
-    if (id) setIsPanelOpen(true);
-    else setIsPanelOpen(false);
+  const resetSelectedTracking = useCallback(() => {
+    setIsFollowingSelected(false);
+    setIsSelectedPathVisible(false);
   }, []);
+
+  const handleSelect = useCallback(
+    (id: string | null) => {
+      setSelectedId(id);
+      setIsFlightPanelMinimized(false);
+
+      if (id) {
+        setIsSelectedPathVisible(true);
+        setIsFollowingSelected(true);
+        setIsPanelOpen(true);
+        return;
+      }
+
+      resetSelectedTracking();
+      setIsPanelOpen(false);
+    },
+    [resetSelectedTracking],
+  );
 
   const handleSelectCountry = useCallback((country: string) => {
     setSelectedCountry(country);
@@ -317,6 +333,8 @@ function Index() {
         setShowLayoutPanel(false);
         setTourStep(null);
         setIsPanelOpen(false);
+        setIsFlightPanelMinimized(false);
+        resetSelectedTracking();
       } else if (["1", "2", "3", "4", "5"].includes(event.key)) {
         const zooms = [2, 4, 6, 8, 10];
         window.dispatchEvent(
@@ -342,7 +360,7 @@ function Index() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [refresh]);
+  }, [refresh, resetSelectedTracking]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null;
@@ -508,8 +526,9 @@ function Index() {
       setSelectedId(null);
       setIsPanelOpen(false);
       setIsFlightPanelMinimized(false);
+      resetSelectedTracking();
     }
-  }, [flights, selectedId, visibleFlightIds]);
+  }, [flights, resetSelectedTracking, selectedId, visibleFlightIds]);
 
   const focus = useMemo(() => {
     if (selectedFlight) {
@@ -556,18 +575,48 @@ function Index() {
   ]);
 
   const inAir = useMemo(() => flights.filter((flight) => !flight.on_ground).length, [flights]);
+  const flightPanelStyle = useMemo(
+    () => ({
+      left: "24px",
+      right: "auto",
+      bottom: "24px",
+      zIndex: 1300,
+    }),
+    [],
+  );
+  const flightPanelDockStyle = useMemo(
+    () => ({
+      left: "24px",
+      right: "auto",
+      bottom: "24px",
+      zIndex: 1210,
+    }),
+    [],
+  );
+  const trackingPanelStyle = useMemo(
+    () => ({
+      right: isDashboardCollapsed ? "96px" : "412px",
+      left: "auto",
+      bottom: "24px",
+      zIndex: 1200,
+      transition: "all 0.3s ease",
+    }),
+    [isDashboardCollapsed],
+  );
+  const closeFlightPanel = useCallback(() => {
+    setIsPanelOpen(false);
+    setIsFlightPanelMinimized(false);
+    resetSelectedTracking();
+  }, [resetSelectedTracking]);
+  const minimizeFlightPanel = useCallback(() => setIsFlightPanelMinimized(true), []);
+  const restoreFlightPanel = useCallback(() => setIsFlightPanelMinimized(false), []);
+  const toggleFollowSelected = useCallback(() => setIsFollowingSelected((value) => !value), []);
+  const toggleSelectedPath = useCallback(() => setIsSelectedPathVisible((value) => !value), []);
 
   return (
     <div
       className={`sw-app-shell theme-${theme} ${isDashboardCollapsed ? "sidebar-collapsed" : ""}`}
     >
-      {/* Liquid Ambient Blobs for Glassmorphism */}
-      <div className="sw-liquid-ambient-container">
-        <div className="sw-liquid-blob sw-liquid-blob-1" />
-        <div className="sw-liquid-blob sw-liquid-blob-2" />
-        <div className="sw-liquid-blob sw-liquid-blob-3" />
-      </div>
-
       <TopBar
         flights={flights}
         flightCount={flights.length}
@@ -609,8 +658,11 @@ function Index() {
                 enrichmentRoute={enrichment.data?.route ?? null}
                 selectedFlight={selectedFlight}
                 selectedFlightTrack={displayFlightTrack}
+                isolateSelected={Boolean(selectedFlight && isFollowingSelected)}
+                selectedPathVisible={isSelectedPathVisible}
                 satellites={satelliteCatalog.satellites}
                 theme={theme}
+                isPanelOpen={isPanelOpen && !isFlightPanelMinimized}
               />
             </ErrorBoundary>
           </Suspense>
@@ -655,38 +707,22 @@ function Index() {
           <FlightDetailPanel
             flight={selectedFlight}
             anomaly={currentAnomalousMap.get(selectedFlight.icao24)}
-            anomalyHistory={anomalyHistory[selectedFlight.icao24] || []}
-            onClose={() => {
-              setIsPanelOpen(false);
-              setIsFlightPanelMinimized(false);
-            }}
-            onMinimize={() => setIsFlightPanelMinimized(true)}
+            anomalyHistory={anomalyHistory[selectedFlight.icao24]}
+            onClose={closeFlightPanel}
+            onMinimize={minimizeFlightPanel}
             enrichment={enrichment.data}
             enrichmentLoading={enrichment.loading}
             flightTrack={displayFlightTrack}
             flightTrackLoading={flightTrack.loading}
-            style={{
-              left: "24px",
-              right: "auto",
-              bottom: "24px",
-              zIndex: 1300,
-            }}
+            style={flightPanelStyle}
           />
         ) : selectedFlight && isPanelOpen && isFlightPanelMinimized ? (
           <FlightDetailRestoreDock
             callsign={selectedFlight.callsign?.trim() || "UNKNOWN"}
             icao24={selectedFlight.icao24}
-            onOpen={() => setIsFlightPanelMinimized(false)}
-            onClose={() => {
-              setIsPanelOpen(false);
-              setIsFlightPanelMinimized(false);
-            }}
-            style={{
-              left: "24px",
-              right: "auto",
-              bottom: "24px",
-              zIndex: 1210,
-            }}
+            onOpen={restoreFlightPanel}
+            onClose={closeFlightPanel}
+            style={flightPanelDockStyle}
           />
         ) : (
           <></>
@@ -696,18 +732,13 @@ function Index() {
           <TrackingPanel
             callsign={selectedFlight.callsign?.trim() || selectedFlight.icao24.toUpperCase()}
             isFollowing={isFollowingSelected}
+            pathVisible={isSelectedPathVisible}
             pointCount={displayFlightTrack?.pointCount ?? 0}
             sourceLabel={selectedTrackSourceLabel}
             isLoading={flightTrack.loading}
-            onToggleFollow={() => setIsFollowingSelected((value) => !value)}
-            onRefreshTrack={flightTrack.refresh}
-            style={{
-              right: isDashboardCollapsed ? "96px" : "412px",
-              left: "auto",
-              bottom: "24px",
-              zIndex: 1200,
-              transition: "all 0.3s ease",
-            }}
+            onToggleFollow={toggleFollowSelected}
+            onTogglePath={toggleSelectedPath}
+            style={trackingPanelStyle}
           />
         )}
         <Suspense fallback={null}>
@@ -948,22 +979,24 @@ function FlightDetailRestoreDock({
 function TrackingPanel({
   callsign,
   isFollowing,
+  pathVisible,
   pointCount,
   sourceLabel,
   isLoading,
   followToggleEnabled = true,
   onToggleFollow,
-  onRefreshTrack,
+  onTogglePath,
   style,
 }: {
   callsign: string;
   isFollowing: boolean;
+  pathVisible: boolean;
   pointCount: number;
   sourceLabel: string | null;
   isLoading: boolean;
   followToggleEnabled?: boolean;
   onToggleFollow: () => void;
-  onRefreshTrack: () => void | Promise<void> | undefined;
+  onTogglePath: () => void;
   style?: React.CSSProperties;
 }) {
   return (
@@ -990,15 +1023,20 @@ function TrackingPanel({
           title={
             followToggleEnabled
               ? isFollowing
-                ? "Stop following target"
-                : "Follow target"
+                ? "Show all map traffic"
+                : "Isolate and follow target"
               : "Selected target is in focus"
           }
         >
           <Crosshair />
           <span>{followToggleEnabled ? (isFollowing ? "Following" : "Follow") : "Tracking"}</span>
         </button>
-        <button type="button" onClick={() => void onRefreshTrack()} title="Refresh path log">
+        <button
+          type="button"
+          className={pathVisible ? "active" : ""}
+          onClick={onTogglePath}
+          title={pathVisible ? "Hide selected path" : "Show selected path"}
+        >
           <RouteIcon />
           <span>Path</span>
         </button>

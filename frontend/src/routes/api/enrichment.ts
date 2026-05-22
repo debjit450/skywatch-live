@@ -45,8 +45,24 @@ interface CircuitState {
 const openskyCircuit: CircuitState = { failures: 0, lastFailure: 0, openUntil: 0 };
 const adsbdbCircuit: CircuitState = { failures: 0, lastFailure: 0, openUntil: 0 };
 
-function cacheKey(icao24: string, callsign: string): string {
-  return `${icao24.toLowerCase()}|${callsign.toUpperCase()}`;
+function cacheCoordinatePart(lat: number | null, lon: number | null): string {
+  if (lat === null || lon === null) return "no-position";
+  return `${lat.toFixed(2)},${lon.toFixed(2)}`;
+}
+
+function cacheKey(
+  icao24: string,
+  callsign: string,
+  lat: number | null,
+  lon: number | null,
+  registration: string,
+): string {
+  return [
+    icao24.toLowerCase(),
+    callsign.toUpperCase(),
+    cacheCoordinatePart(lat, lon),
+    registration.toUpperCase(),
+  ].join("|");
 }
 
 function getCached(key: string): EnrichmentData | null {
@@ -81,6 +97,11 @@ function distanceBetweenCoordinates(
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return EARTH_RADIUS_KM * c;
+}
+
+function routeNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
 function withCircuitBreaker(circuit: CircuitState): "ok" | "open" {
@@ -276,9 +297,9 @@ async function fetchAdsbdbRoute(
           municipality: fr.origin.municipality,
           countryName: fr.origin.country_name,
           countryIso: fr.origin.country_iso_name,
-          latitude: fr.origin.latitude,
-          longitude: fr.origin.longitude,
-          elevation: fr.origin.elevation,
+          latitude: routeNumber(fr.origin.latitude),
+          longitude: routeNumber(fr.origin.longitude),
+          elevation: routeNumber(fr.origin.elevation),
         }
       : null;
 
@@ -290,9 +311,9 @@ async function fetchAdsbdbRoute(
           municipality: fr.destination.municipality,
           countryName: fr.destination.country_name,
           countryIso: fr.destination.country_iso_name,
-          latitude: fr.destination.latitude,
-          longitude: fr.destination.longitude,
-          elevation: fr.destination.elevation,
+          latitude: routeNumber(fr.destination.latitude),
+          longitude: routeNumber(fr.destination.longitude),
+          elevation: routeNumber(fr.destination.elevation),
         }
       : null;
 
@@ -609,7 +630,7 @@ export const Route = createFileRoute("/api/enrichment")({
           return jsonResponse({ error: "Invalid first-seen coordinates" }, { status: 400 });
         }
 
-        const key = cacheKey(icao24, callsign);
+        const key = cacheKey(icao24, callsign, latitude.value, longitude.value, reg);
         const cached = !isAnomaly && getCached(key);
         if (cached) {
           return jsonResponse(cached, {

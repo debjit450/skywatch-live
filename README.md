@@ -1,562 +1,517 @@
-# 🛰️ SkyWatch Live
-### Airspace Intelligence, Space Situational Awareness & Temporal-Spatial Anomaly Detection Platform
+# SkyWatch Live
 
-<div align="center">
+Airspace surveillance, satellite situational awareness, and anomaly detection for live public aviation data.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](https://opensource.org/licenses/MIT)
-[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev)
-[![Django](https://img.shields.io/badge/Django-092E20?style=for-the-badge&logo=django&logoColor=white)](https://djangoproject.com)
-[![Celery](https://img.shields.io/badge/Celery-37814A?style=for-the-badge&logo=celery&logoColor=white)](https://docs.celeryq.dev)
-[![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)](https://prometheus.io)
+SkyWatch Live combines a React/TanStack Start frontend with a Django/Channels/Celery backend. It can run as a lightweight frontend-only live-data dashboard, or as a full-stack ingestion system with PostgreSQL persistence, Redis cache/channel layers, Celery workers, anomaly scoring, alert rules, Prometheus metrics, and Grafana dashboards.
 
-[⚡ Quick Start](#-quick-start) • [🏗️ System Architecture](#%EF%B8%8F-system-architecture) • [🔧 Configuration](#%EF%B8%8F-runtime-configuration-matrix) • [🚀 Deployments](#-production-deployment-runbook) • [🛡️ Security](#-security--integrity-checklist) • [📊 Observability](#-observability--telemetry-metrics)
+![SkyWatch Live dashboard](frontend/public/showcase/skywatch.png)
 
-</div>
+## Current Implementation
 
----
+This repository is wired to real public APIs. The supplemental radar, UAT, and satellite ADS-B clients are lightweight aggregator clients, not placeholder adapters:
 
-## 🖥️ Platform Overview
+| Area | Current behavior |
+| :--- | :--- |
+| Flight state feed | OpenSky Network is the primary feed. The backend can merge OpenSky with ADS-B One, Airplanes.live, ADSB.lol, OGN/FLARM, FAA/military radar, UAT, and satellite ADS-B supplemental states. |
+| FAA/military radar | `backend/flights/services/faa_radar.py` calls `https://api.airplanes.live/v2/mil` and normalizes military/government aircraft positions as `data_source="faa_radar"` and `position_source=4`. No repo-specific key is required. |
+| UAT | `backend/flights/services/uat_client.py` calls Airplanes.live point endpoints around New York, Los Angeles, Chicago, Houston, and San Francisco, then filters UAT/TIS-B source types such as `adsb_icao_uat`, `adsb_other_uat`, `adsr_icao_uat`, and `tisb_*`. |
+| Satellite ADS-B | `backend/flights/services/satellite_adsb.py` calls Airplanes.live point endpoints around Honolulu, Reykjavik, the Azores, and Fiji, then filters explicit satellite flags and oceanic position heuristics. |
+| Airspace restrictions | `backend/flights/services/airspace_restrictions.py` builds live GeoJSON from Aviation Weather Center SIGMET feeds and FAA TFR GeoJSON. |
+| Satellites | The backend and frontend server routes fetch CelesTrak GP/TLE data and propagate current sub-satellite points with SGP4. Bootstrap TLEs are used only when CelesTrak is unreachable, and the payload labels that fallback. |
+| Frontend-only mode | The TanStack Start server routes call live OpenSky, CelesTrak, ADSBDB, and image proxy APIs. This mode does not provide backend persistence, Celery jobs, or WebSocket fanout. |
+| Full-stack mode | Django exposes REST and WebSocket APIs. Celery Beat schedules ingestion and scoring jobs; Celery workers perform the actual background work. |
 
-**SkyWatch Live** is a platform for airspace surveillance, orbital tracking, and anomaly detection. It combines telemetry ingestion with spatial-temporal machine learning models, parsing ADS-B state vectors, propagating satellite footprints via orbital mechanics, overlaying FAA flight restrictions, and forecasting trajectory anomalies.
+## Data Sources
 
-<div align="center">
-  <img src="frontend/public/showcase/skywatch.png" alt="SkyWatch Live - Airspace Surveillance Dashboard" width="100%" style="border-radius: 8px;" />
-</div>
+| Source | Code path | Endpoint / protocol | Notes |
+| :--- | :--- | :--- | :--- |
+| OpenSky Network | `backend/flights/services/opensky.py`, `frontend/src/routes/api/flights.ts` | `https://opensky-network.org/api/states/all` | OAuth client credentials and legacy username/password are optional. Public access works subject to OpenSky rate limits. |
+| ADS-B One | `backend/flights/services/adsb_sources.py` | `https://api.adsb.one/v2/point/{lat}/{lon}/{rad}` | Multi-hub point queries are deduplicated by ICAO24. |
+| Airplanes.live ADS-B | `backend/flights/services/adsb_sources.py` | `https://api.airplanes.live/v2/point/{lat}/{lon}/{rad}` | Multi-hub point queries are normalized into the OpenSky-shaped state object. |
+| Airplanes.live military/radar | `backend/flights/services/faa_radar.py` | `https://api.airplanes.live/v2/mil` | Public military/government aircraft aggregator. |
+| Airplanes.live UAT | `backend/flights/services/uat_client.py` | `https://api.airplanes.live/v2/point/{lat}/{lon}/{rad}` | US regional hub queries filtered by UAT/TIS-B type markers. |
+| Airplanes.live satellite ADS-B | `backend/flights/services/satellite_adsb.py` | `https://api.airplanes.live/v2/point/{lat}/{lon}/{rad}` | Oceanic hub queries filtered by `sat` flags, satellite type strings, and oceanic heuristics. |
+| ADSB.lol | `backend/flights/services/adsb_sources.py` | `https://api.adsb.lol/v2/point/{lat}/{lon}/{rad}` | Public ADS-B point feeds. |
+| Open Glider Network | `backend/flights/services/ogn_client.py` | APRS-IS at `aprs.glidernet.org:14580` | Background socket listener buffers FLARM/OGN aircraft positions. |
+| CelesTrak | `backend/flights/services/celestrak.py`, `frontend/src/routes/api/satellites.ts` | `https://celestrak.org/NORAD/elements/gp.php` | TLE groups include stations, visual, weather, resource, GPS, Galileo, BeiDou, Starlink, and OneWeb. |
+| Aviation Weather Center | `backend/flights/services/weather.py`, `backend/flights/services/airspace_restrictions.py` | `https://aviationweather.gov/api/data/metar`, `airsigmet`, `isigmet` | METAR parsing plus domestic/international SIGMET GeoJSON normalization. |
+| FAA TFR | `backend/flights/services/airspace_restrictions.py` | FAA TFR WFS GeoJSON | `TFR_GEOJSON_URL` can override the default feed. |
+| ADSBDB | `frontend/src/routes/api/enrichment.ts`, `frontend/src/routes/api/photo.ts`, `backend/flights/services/aircraft_db.py` | `https://api.adsbdb.com/v0` | Aircraft metadata, route enrichment, and photo proxy support. Backend aircraft metadata also uses the OpenSky aircraft database CSV. |
 
----
+Public aviation feeds can throttle, return sparse coverage, or omit positions in some regions. The repository handles failures defensively, but it cannot make public receiver coverage continuous.
 
-## 📊 Performance Capabilities & Ingestion Metrics
+## Capabilities
 
-Tested telemetry ingestion and processing benchmarks under continuous operational loads:
+- Live aircraft map with source-aware coloring, filters, route overlays, selected-aircraft detail panels, and historical track playback.
+- Django REST API for flights, routes, predictions, anomalies, analytics, alert rules, weather, airspace restrictions, source counts, and satellites.
+- WebSocket broadcast path at `/ws/flights/` for committed flight snapshots and anomaly alerts.
+- Celery ingestion pipeline that merges OpenSky with supplemental public aggregator clients and writes `Aircraft`, `FlightState`, `FlightPosition`, and `FlightRoute` records.
+- Client-side and backend anomaly display covering rule-based alerts, ML scores, proximity/circling/behavioral signals, custom alert rules, and explainability payloads.
+- Short-horizon route prediction using recent state vectors.
+- Optional LSTM sequence anomaly scoring. The module is import-safe when TensorFlow/Keras is absent; install TensorFlow separately before training or using the LSTM model.
+- CelesTrak SGP4 satellite visualization with group summaries, orbit quality labels, and fallback transparency.
+- METAR cards and AWC/FAA airspace overlays.
+- Prometheus metrics, JSON logs with request IDs, optional Sentry, optional OpenTelemetry export, and Grafana provisioning.
 
-| Operational Parameter | Capacity Baseline | Functional Description & System Impact |
-| :--- | :--- | :--- |
-| **Monitored Airframes** | **11,862 Active Vectors** (10,894 Airborne) | Real-time ingest and rendering of high-density global ADS-B state-vectors on 30-second polling cycles. |
-| **Geographic Facility Index** | **85,390 Mapped Facilities** (249 Countries) | Dynamic origin, destination, and distance vector mapping resolved on airframe selection. |
-| **Predictive Anomaly Scans** | **45 Path Anomalies** (0.38% detection rate) | Asynchronous trajectory evaluation for altitude drift, signal dropouts, and lateral tracking drifts via Celery. |
-| **Satellite Tracking** | **Active Orbital Propagation** | Automated processing of CelesTrak TLE formats using SGP4 mechanics to overlay footprints. |
-| **Telemetry Granularity** | **Sub-second precision** | Renders pressure altitude (FL), groundspeed, heading, vertical rate, and route execution percentages. |
-| **Ingress Filtering** | **Heuristic Confidence Verification** | Automatic filtering of corrupted telemetry vectors before cache and database persistence. |
-
----
-
-## ✨ Core System Capabilities
-
-### 🛰️ Space Situational Awareness (SSA) & Orbital Mechanics
-*   **TLE Ingestion**: Dynamically ingests Two-Line Element (TLE) datasets from CelesTrak for active satellite constellations.
-*   **SGP4 Propagation**: Executes real-time analytical orbital coordinate projection and path tracking using SGP4 mathematical models.
-*   **Sensor Coverage Swaths**: Computes and overlays sensor footprints and swaths directly onto the map layout.
-
-### 🛡️ Airspace Constraints & Geopolitical Threat Mitigation
-*   **Temporary Flight Restrictions (TFR)**: Automatically pulls and caches live FAA airspace restriction datasets, mapping circular hazards and custom exclusion polygons.
-*   **Meteorological Hazards (AWC SIGMET)**: Ingests Aviation Weather Center domestic and international SIGMET feeds to visualize weather constraints affecting routing decisions.
-*   **Conflict Zone Registries**: Pre-registers 15 high-risk regional airspace boundaries and FIRs (such as UKFV/Dnipro FIR, Rostov/Moscow FIR, OIIX/Tehran FIR, ORBB/Baghdad FIR, OYYE/Sanaa FIR, OSTT/Damascus FIR, HLLL/Tripoli FIR, OAKB/Kabul FIR, ZKKP/Pyongyang FIR, VYYY/Yangon FIR, HSSS/Khartoum FIR, Kashmir Corridor, Taiwan Strait ADIZ, South China Sea disputed sectors, and the Sahel/Niger corridor). *Note: While defined in `conflict-zones.ts`, these boundary definitions are not actively wired up in the default setup, leaving it fully to the user's/operator's choice whether to import, render, or wire them up for active threat alerts.*
-
-### 🧠 Ensemble Anomaly Detection & Trajectory Forecasting
-*   **ML Ensemble Classifier**: Runs a 3-model ensemble composed of:
-    1.  **Isolation Forest**: Global telemetry outlier scoring.
-    2.  **Local Outlier Factor (LOF)**: Density-based local anomaly detection (novelty detection mode).
-    3.  **MLP Autoencoder**: Calculates reconstruction error deviations across the 30-dimensional engineered feature space.
-*   **Sequence Prediction (LSTM)**: Incorporates an optional sequence autoencoder Long Short-Term Memory (LSTM) network trained using Keras to evaluate sequence dynamics (altitude, velocity, heading rate, vertical rate) over a 30-state temporal horizon.
-*   **Explainable AI (XAI)**: Generates structured diagnostics explaining the physical telemetry parameters (e.g., Z-scores, acceleration proxies, envelope violations) that triggered an anomaly flag.
-
----
-
-## 🏗️ System Architecture
-
-SkyWatch Live uses an event-driven architecture to handle telemetry streaming, machine learning inferences, and asynchronous tasks:
+## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph External Feeds [Data & Telemetry Providers]
-        OS[OpenSky Network ADS-B Feed]
-        SE[Supplemental feeds: ADS-B One, Airplanes.live, ADSB.lol]
-        OGN[OGN/FLARM Glider Network]
-        FAA[FAA & Supplemental Radar Stubs]
-        SAT[Space-Based Satellite ADS-B]
-        CT[CelesTrak Satellite Orbit Feed]
-        WX[Aviation Weather Center SIGMETs]
-        TFR[FAA Airspace Restrictions]
+    subgraph PublicSources[Public data sources]
+        OS[OpenSky states]
+        ADSB[ADS-B One / Airplanes.live / ADSB.lol point feeds]
+        MIL[Airplanes.live /v2/mil]
+        UAT[Airplanes.live UAT point feeds]
+        SATADS[Airplanes.live oceanic ADS-B]
+        OGN[OGN APRS-IS]
+        CT[CelesTrak GP/TLE]
+        WX[AWC METAR/SIGMET]
+        TFR[FAA TFR GeoJSON]
+        ADSBDB[ADSBDB metadata/photos]
     end
 
-    subgraph Backend Core [Django & Celery Cluster]
-        WS[ASGI Daphne / WebSockets Channels]
-        REST[REST API - Django REST Framework]
-        DB[(PostgreSQL Database)]
-        CACHE[(Redis Cache, Channel Layer & Broker)]
-        CW[Celery Ingestion Workers]
-        CB[Celery Beat Scheduler]
-        ML[ML Ensemble Inference Engine]
-        LSTM[LSTM Sequence Predictor]
-        PROM[Prometheus Telemetry Metrics]
+    subgraph Backend[Django backend]
+        REST[DRF REST API]
+        WS[Channels WebSockets]
+        CELERY[Celery workers]
+        BEAT[Celery Beat]
+        CACHE[Redis cache/channel/broker]
+        DB[(PostgreSQL)]
+        ML[Rule and ML anomaly scoring]
+        METRICS[Prometheus /metrics]
     end
 
-    subgraph Client Application [Vite / React Dashboard]
-        FE[Surveillance Map]
-        WID[Alert & Observability Dashboard]
+    subgraph Frontend[React / TanStack Start]
+        UI[Leaflet dashboard]
+        LOCALAPI[Server routes for live public APIs]
     end
 
-    OS -->|Ingest State Vectors| CW
-    SE -->|Supplemental State Vectors| CW
-    OGN -->|FLARM Glider Signals| CW
-    FAA -->|Radar Coordinates| CW
-    SAT -->|Oceanic Satellite Telemetry| CW
-    CT -->|Ingest TLE Data| CW
-    WX -->|SIGMET JSON Overlays| REST
-    TFR -->|FAA Airspace Restrictions| CW
-    
-    CB -->|Trigger Ingestion & Retraining Schedules| CACHE
-    CACHE -->|Broker Tasks| CW
-    CW -->|Write Flight States & Routes| DB
-    CW -->|Extract 30-D Feature Vectors| ML
-    CW -->|Predict Horizon Sequences| LSTM
-    ML -->|Detect Anomalies & Explanations| CACHE
-    LSTM -->|Compute Sequence Reconstruction Errors| CACHE
-    
-    REST -->|Fetch Flight Analytics & TFRs| DB
-    WS <-->|Real-Time Telemetry Stream| CACHE
-    
-    FE <-->|WebSocket Stream| WS
-    FE -->|REST Queries| REST
-    WID -->|Manage Alerts & View Charts| REST
-    
-    CW -->|Export Performance Metrics| PROM
-    PROM -->|Scrape /metrics| Grafana((Grafana Visualizer))
+    OS --> CELERY
+    ADSB --> CELERY
+    MIL --> CELERY
+    UAT --> CELERY
+    SATADS --> CELERY
+    OGN --> CELERY
+    CT --> REST
+    WX --> REST
+    TFR --> REST
+    ADSBDB --> LOCALAPI
+
+    BEAT --> CELERY
+    CELERY --> DB
+    CELERY --> CACHE
+    CELERY --> ML
+    ML --> DB
+    CACHE --> WS
+    REST --> DB
+    REST --> CACHE
+    WS --> UI
+    REST --> UI
+    LOCALAPI --> UI
+    METRICS --> Grafana[Grafana]
 ```
 
----
-
-## 📁 Repository Layout & File Mapping
+## Repository Layout
 
 ```text
 skywatch-live/
-├── 📁 .github/                  # CI/CD Workflows (GitHub Actions & Dependabot configurations)
-├── 📁 backend/                  # Django ASGI Application core
-│   ├── 📁 flights/              # Core Flight management app
-│   │   ├── 📁 management/       # Django commands (e.g. training LSTM models, db seeders)
-│   │   ├── 📁 migrations/       # Database schemas & migrations (observability schema v0006)
-│   │   ├── 📁 services/         # Integration Services
-│   │   │   ├── 📄 adsb_sources.py        # Deduped supplementary ADS-B feeds (ADS-B One, Lol, Airplanes.live)
-│   │   │   ├── 📄 advanced_detection.py   # Proximity alerts, loitering/circling, geofence, and profile deviations
-│   │   │   ├── 📄 aircraft_db.py         # Local aircraft database lookup routines utilizing aircraftDatabase.csv
-│   │   │   ├── 📄 airspace_restrictions.py # FAA TFR & Aviation Weather Center SIGMET aggregators
-│   │   │   ├── 📄 anomaly_detector.py    # Rule Engine + ML Ensemble (Isolation Forest + LOF + MLP Autoencoder)
-│   │   │   ├── 📄 cache.py               # Redis-based state caching and serialization helper
-│   │   │   ├── 📄 celestrak.py           # Two-Line Element (TLE) parser and SGP4 orbital propagator
-│   │   │   ├── 📄 explainability.py      # Explainable AI diagnostic generation for flagged anomalies
-│   │   │   ├── 📄 faa_radar.py           # Secondary FAA radar telemetry stub receiver
-│   │   │   ├── 📄 flight_profiler.py     # Per-airframe EMA behavioral profiles
-│   │   │   ├── 📄 kalman_predictor.py    # Kalman Filtering for telemetry smoothing & coordinate estimation
-│   │   │   ├── 📄 ogn_client.py          # Open Glider Network (FLARM) ingestion client
-│   │   │   ├── 📄 opensky.py             # OpenSky Network API ingestion client
-│   │   │   ├── 📄 prediction.py          # Kinematic state trajectory prediction handler
-│   │   │   ├── 📄 satellite_adsb.py      # Space-based ADS-B telemetry stubs
-│   │   │   ├── 📄 tfr.py                 # Temporary Flight Restrictions client/cacher
-│   │   │   ├── 📄 uat_client.py          # Low-altitude UAT (978 MHz) receiver interface
-│   │   │   └── 📄 weather.py             # METAR and SIGMET feeds integration client
-│   │   ├── 📄 consumers.py      # WebSockets channel consumer handlers
-│   │   ├── 📄 metrics.py        # Prometheus metric exporter (Gauge, Counter, Histogram registries)
-│   │   ├── 📄 models.py         # DB Entities (Aircraft, FlightState, FlightRoute, FlightPosition, AlertRule, AnomalyEvent, SystemMetrics, AircraftProfile)
-│   │   ├── 📄 tasks.py          # Celery background queue processing routines
-│   │   ├── 📄 views.py          # DRF REST Endpoints (TFRs, Flight Tracking, Custom Alerts, Analytics)
-│   │   └── ...
-│   ├── 📁 ml/                   # Machine Learning Codebase
-│   │   ├── 📄 features.py       # 30-Dimensional Feature Engineering pipeline
-│   │   ├── 📄 lstm.py           # Keras LSTM Sequence Reconstruction model
-│   │   └── 📄 train.py          # Model compilation & fitting script
-│   └── 📄 requirements.txt      # Python dependencies list
-├── 📁 frontend/                 # React frontend powered by Vite & TanStack Start
-│   ├── 📁 public/               # Asset distribution, static resources, and showcases
-│   ├── 📁 src/components/       # UI Deck
-│   │   ├── 📄 AlertRulesPanel.tsx # Geofencing & threshold rules configuration widget
-│   │   ├── 📄 AnalyticsPanel.tsx  # Interactive charts (groundspeed profiles, altitude bands, alert trends)
-│   │   ├── 📄 FlightDetailPanel.tsx # Operational parameters, charts, and flight trajectory playback
-│   │   ├── 📄 GlobalDashboard.tsx # Core layout containing flight queues, search panels, and quick statistics
-│   │   ├── 📄 MapLegend.tsx       # Leaflet Map overlays legend
-│   │   └── 📄 MapView.tsx         # Leaflet Canvas overlay, rendering flights, paths, TFR circles, & footprints
-│   ├── 📁 src/hooks/            # State and socket connectors (useFlights, useSatellites, useFlightTrack)
-│   ├── 📁 src/lib/              # Helper libraries
-│   │   ├── 📄 aircraft-class.ts # ICAO classification (e.g. High Performance, Heavy, Rotorcraft, Glider)
-│   │   ├── 📄 conflict-zones.ts  # Pre-registered FIR boundary coordinates (UKFV, OIIX, ORBB, OYYE, OSTT)
-│   │   └── 📄 prediction.ts     # Client-side trajectory forecasting algorithms
-│   ├── 📁 src/routes/           # Main routes & API proxies (TanStack Start server-only routes)
-│   └── ...
-├── 📁 grafana/                  # Grafana dashboards & Prometheus datasource configs
-├── 📁 monitoring/               # Prometheus configuration targets
-└── 📄 docker-compose.yml        # Infrastructure stack (Postgres, PgBouncer, Redis, Jaeger, Prometheus, Grafana)
+  backend/
+    manage.py
+    requirements.txt
+    skywatch/
+      settings.py              # Django, Channels, Celery, Redis, CORS, security, telemetry settings
+      urls.py                  # Health checks, metrics, admin, API includes
+      celery.py                # Celery app and task context hooks
+      middleware.py            # Request IDs, rate limiting, JSON logging
+    flights/
+      models.py                # Aircraft, states, positions, routes, anomalies, metrics, alert rules
+      views.py                 # DRF endpoint implementations
+      urls.py                  # /api/v1 route table
+      tasks.py                 # Celery ingestion, scoring, route building, enrichment, health tasks
+      consumers.py             # WebSocket consumer
+      metrics.py               # Prometheus metric handles
+      services/
+        adsb_sources.py        # ADS-B One, Airplanes.live, ADSB.lol point feed clients
+        faa_radar.py           # Airplanes.live /v2/mil client
+        uat_client.py          # Airplanes.live UAT/TIS-B point-feed client
+        satellite_adsb.py      # Airplanes.live oceanic satellite ADS-B client
+        opensky.py             # OpenSky state API client
+        ogn_client.py          # OGN/FLARM APRS client
+        celestrak.py           # CelesTrak TLE fetching and SGP4 propagation
+        airspace_restrictions.py # AWC SIGMET and FAA TFR GeoJSON aggregation
+        weather.py             # METAR fetch and decoding
+        anomaly_detector.py    # Rule checks and ensemble model scoring
+        advanced_detection.py  # Proximity, circling, and profile deviation logic
+        prediction.py          # Short-horizon prediction
+        aircraft_db.py         # Aircraft metadata lookup
+  frontend/
+    package.json
+    src/
+      routes/
+        index.tsx              # Main dashboard route
+        api/                   # TanStack Start server routes for OpenSky, CelesTrak, enrichment, photos
+      components/              # Map, dashboard, analytics, alerts, top bar, detail panels
+      hooks/                   # Flight, satellite, enrichment, track, airport hooks
+      lib/                     # Data-source registry, formatters, predictions, route/track utilities
+      styles.css
+    public/
+      showcase/skywatch.png
+  scripts/
+    backend-manage.mjs         # Cross-platform Django manage.py runner
+    backend-celery.mjs         # Cross-platform Celery runner
+    dev-all.mjs                # Starts frontend and Django API servers
+  monitoring/
+    prometheus.yml
+  grafana/
+    provisioning/
+  docker-compose.yml           # Postgres, PgBouncer, Redis, Jaeger, Prometheus, Grafana
+  startup.ps1                  # Windows bootstrap helper
+  QUICKSTART.md
 ```
 
----
+## Prerequisites
 
-## 📡 REST API Developer Reference
+- Node.js 22 or newer.
+- npm 10 or newer.
+- Python 3.11 or newer.
+- Docker Desktop for the default local infrastructure stack.
+- Optional: TensorFlow/Keras if you want to train and run the LSTM sequence model.
 
-All core backend endpoints are versioned under `/api/v1/` and expose the following operations:
+## Quick Start
 
-### ✈️ Flight Telemetry & Trajectories
-*   `GET /api/v1/flights/` — Returns list of active airborne airframes within the tracking cache.
-*   `GET /api/v1/flights/<icao24>/` — Retrieves detailed state vectors, ownership registries, and physical characteristics of a specific ICAO hex address.
-*   `GET /api/v1/flights/<icao24>/route/` — Resolves the sessionized flight trajectory as GeoJSON coordinates for map overlay.
-*   `GET /api/v1/playback/` — Fetches historical coordinate segments for flight path replay sessions.
-*   `GET /api/v1/predictions/<icao24>/` — Computes predicted coordinates, altitude, and confidence intervals for 1, 2, 3, 5, and 10 minutes ahead.
+### Windows bootstrap
 
-### 🛡️ Airspace Constraints & Weather
-*   `GET /api/v1/airspace/restrictions/` — Aggregates live airspace restrictions (SIGMET meteorological hazard alerts, geopolitical FIR risks).
-*   `GET /api/v1/airspace/tfr/` — Pulls active FAA Temporary Flight Restrictions geofences.
-*   `GET /api/v1/weather/metar/` — Queries raw and parsed METAR telemetry for target airports.
-
-### 🧠 Alerts, Anomalies & Configuration
-*   `GET /api/v1/anomalies/` — Streams active spatial-temporal anomalies.
-*   `GET /api/v1/anomalies/history/` — Queries resolved anomalies.
-*   `GET /api/v1/anomalies/<id>/explanation/` — Generates explainable AI JSON diagnostics detailing the anomaly score composition.
-*   `POST /api/v1/anomalies/<id>/feedback/` — Submits supervisor approval or rejection comments on model flags to retrain classifiers.
-*   `GET /api/v1/alert-rules/` — Retrieves all configured geofences and kinematic threshold alert rules.
-*   `POST /api/v1/alert-rules/` — Creates a new custom alert rule.
-*   `GET /api/v1/alert-rules/<id>/` — Retrieves detailed specifications for a specific alert rule.
-*   `PATCH /api/v1/alert-rules/<id>/` — Partially updates a custom alert rule structure.
-*   `DELETE /api/v1/alert-rules/<id>/` — Removes a custom alert rule.
-
-### 📊 Observability & System Analytics
-*   `GET /api/v1/analytics/` — Returns dashboard metrics summary (counts, anomaly rates, average ML score, timelines).
-*   `GET /api/v1/analytics/timeline/` — Returns historical system metrics over specified hours lookback.
-*   `GET /api/v1/analytics/traffic/` — Aggregates hourly active aircraft counts.
-*   `GET /api/v1/analytics/routes/` — Lists most active flight routes (origin to destination airports).
-*   `GET /api/v1/analytics/anomaly-rate/` — Computes daily metrics showing anomaly occurrences per 100 flights.
-*   `GET /api/v1/analytics/aircraft-types/` — Categorizes database distribution of aircraft manufacturer and model types.
-*   `GET /api/v1/sources/` — Resolves counts and metadata for active telemetry providers (OpenSky, ADSB-One, FLARM, Satellite, etc.).
-*   `GET /api/v1/satellites/` — Retrieves satellite Two-Line Element (TLE) datasets propagated via SGP4 mechanics.
-
----
-
-## ⚙️ Runtime Configuration Matrix
-
-The application supports two operational deployment profiles:
-
-| Operational Profile | Core Infrastructure | Description |
-| :--- | :--- | :--- |
-| **`frontend-only`** | React Application Only | Feeds are proxied using TanStack Start API endpoints. Renders simulated/cached telemetry. |
-| **`full-stack`** | Daphne + Celery + Redis + PostgreSQL | Enables background ML scoring, automated route assembly, FAA TFR caching, and live WebSocket telemetry streams. |
-
----
-
-## 🛠️ System Prerequisites
-
-Verify that the local environment matches the following tool standards before deployment:
-
-*   **Node.js** `22.x` or higher (Active LTS) 🟢
-*   **npm** `10.x` or higher 📦
-*   **Python** `3.11.x` or higher 🐍
-*   **Docker Desktop** (Or standalone `PostgreSQL 16+`, `PgBouncer 1.24+`, `Redis 7+`, `Jaeger 1.57+`, `Prometheus`, `Grafana`) 🐳
-
----
-
-## ⚡ Quick Start
-
-### 🏁 Automated Environment Bootstrap (Windows)
-
-To automatically configure local environment variables, compile required python packages, execute migrations, configure database containers, and run development servers concurrently:
+From the repository root:
 
 ```powershell
 npm run startup
 npm run dev-all
 ```
 
----
+`startup.ps1` creates local env files when missing, starts Docker Compose unless `-NoDocker` is used, installs frontend and backend dependencies, creates `backend/venv`, and runs migrations.
 
-### 💻 Manual Cross-Platform Setup (Linux / macOS)
+Use SQLite/in-memory local mode when Docker is unavailable:
 
-For manual installations or execution on POSIX-compliant operating systems:
+```powershell
+npm run startup:nodock
+npm run dev-all
+```
 
-#### 1. Launch Infrastructure Containers
-Ensure Docker is active, then spin up PostgreSQL, PgBouncer, Redis, Jaeger, Prometheus, and Grafana:
+### Full backend ingestion
+
+`npm run dev-all` starts only the React dev server and Django API server. To ingest, score, persist, and broadcast backend flight data, run these in additional terminals after Redis and the database are available:
+
+```powershell
+npm run backend:celery
+npm run backend:beat
+```
+
+Celery Beat schedules the periodic jobs. Celery workers execute them.
+
+### Manual setup
+
 ```bash
 docker compose up -d
-```
 
-#### 2. Configure Backend Server
-```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-python manage.py migrate
-python manage.py train_lstm_anomaly  # Initialize ML model weights
-cd ..
 ```
 
-#### 3. Configure Frontend Client
+For local Docker development, edit `backend/.env` to use local-safe values such as:
+
+```dotenv
+DJANGO_SECRET_KEY=local-dev-only-change-before-production
+DJANGO_DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1,[::1]
+CSRF_TRUSTED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+DATABASE_URL=postgres://skywatch:skywatch_dev@localhost:5432/skywatch
+REDIS_URL=redis://localhost:6379/0
+ALLOW_IN_MEMORY_CHANNEL_LAYER=True
+```
+
+Then run:
+
 ```bash
-cd frontend
+python manage.py migrate
+cd ../frontend
 npm ci
 cp .env.example .env.local
 cd ..
-```
-
-#### 4. Execute Coordinated Process Stack
-```bash
 npm run dev-all
 ```
 
----
-
-### 📍 Local Network Entrypoints
-
-The default local ports and targets are defined as:
-
-*   **Surveillance UI Dashboard**: [http://localhost:5173](http://localhost:5173)
-*   **Django REST API Server**: [http://localhost:8000/api/v1/](http://localhost:8000/api/v1/)
-*   **Prometheus Metrics Endpoints**: [http://localhost:8000/metrics](http://localhost:8000/metrics)
-*   **Prometheus Web Console**: [http://localhost:9090](http://localhost:9090)
-*   **Grafana Observability Portal**: [http://localhost:3001](http://localhost:3001) (Credentials: `admin` / `admin`)
-*   **Jaeger Distributed Tracing UI**: [http://localhost:16686](http://localhost:16686)
-*   **Backend Liveness Probe**: [http://localhost:8000/healthz/](http://localhost:8000/healthz/)
-*   **Backend Readiness Probe**: [http://localhost:8000/readyz/](http://localhost:8000/readyz/)
-*   **Backend Live State Probe**: [http://localhost:8000/health/live](http://localhost:8000/health/live)
-*   **Backend Service Readiness Probe**: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
-*   **Backend Core JSON Stats Probe**: [http://localhost:8000/health/metrics](http://localhost:8000/health/metrics)
-
----
-
-## 💻 Process Management Commands
-
-High-level shortcuts mapped inside the root package orchestrator:
-
-| Command | Process Type | Purpose |
-| :--- | :--- | :--- |
-| `npm run dev` | Frontend | Boots React development build server. |
-| `npm run backend:dev` | Backend | Boots Django backend web server. |
-| `npm run dev-all` | Orchestration | Starts React client and Django servers concurrently. |
-| `npm run check` | Frontend | Audits React types, runs ESLint checks, and compiles frontend static bundles. |
-| `npm run backend:check` | Backend | Performs internal Django syntax and settings integrity validation. |
-| `npm run backend:check-deploy` | Backend | Evaluates settings against production security criteria. |
-| `npm run backend:migrate` | Backend | Executes structural SQL migrations on the PostgreSQL database. |
-| `npm run backend:celery` | Backend | Starts Celery async tasks processor. |
-| `npm run backend:beat` | Backend | Starts Celery Beat periodic task scheduler. |
-| `npm run db:reset` | Database | Resets database schemas and executes clean migration setup. |
-| `npm run startup` | Setup | Standard automated bootstrap environment wizard (includes docker compose). |
-| `npm run startup:nodock` | Setup | Boots in SQLite/in-memory fallback mode bypassing Docker infrastructure. |
-| `npm run backend:test` | Quality | Launches backend Django unit test runner. |
-| `npm test` | Quality | Executes verification suites across both frontend and backend directories. |
-| `npm run docker:up` | Infrastructure | Launches Docker compose container services. |
-| `npm run docker:down` | Infrastructure | Stops and removes Docker compose container services. |
-| `npm run docker:logs` | Infrastructure | Follows the log stream from running Docker containers. |
-
----
-
-## 🔧 Environment Configuration
-
-> [!CAUTION]
-> **Credential Security**: Never commit `.env`, `.env.local`, API keys, DB credentials, or generated secrets to source control. The repository ignores these by default.
-
-### 🔒 Backend Configuration Parameters (`backend/.env`)
-
-| Variable | Requirement | Description & Default Settings |
-| :--- | :--- | :--- |
-| `DJANGO_SECRET_KEY` | 🔴 Required | Core cryptographic key for system signatures and sessions. |
-| `DJANGO_DEBUG` | 🔴 Required | Boolean flag. Must be set to `False` in staging and production to prevent disclosure of stack traces. |
-| `ALLOWED_HOSTS` | 🔴 Required | Comma-separated list of public hostnames or IP addresses. |
-| `CSRF_TRUSTED_ORIGINS` | 🔴 Required | Valid target HTTPS origins allowed to bypass cross-site request forgery protection. |
-| `CORS_ALLOWED_ORIGINS` | 🔴 Required | Comma-separated list of approved frontend domain origins. |
-| `DATABASE_URL` | 🔴 Required | Complete connection string for target PostgreSQL database. |
-| `READ_REPLICA_DATABASE_URL` | ⚪ Optional | Target database URL mapping for read replicas. |
-| `REDIS_URL` | 🔴 Required | Complete target Redis network endpoint. |
-| `OPENSKY_CLIENT_ID` | ⚪ Optional | API client ID to bypass default public request rate limiting. |
-| `OPENSKY_CLIENT_SECRET` | ⚪ Optional | API client credential for authenticating with the telemetry feed. |
-| `ADSBONE_ENABLED` | ⚪ Optional | Boolean. Enables the ADS-B One ingestion stream. Default: `True`. |
-| `AIRPLANESLIVE_ENABLED` | ⚪ Optional | Boolean. Enables the Airplanes.live ingestion stream. Default: `True`. |
-| `ADSBLOL_ENABLED` | ⚪ Optional | Boolean. Enables the ADSB.lol ingestion stream. Default: `True`. |
-| `OGN_ENABLED` | ⚪ Optional | Boolean. Enables the Open Glider Network (FLARM) ingestion stream. Default: `True`. |
-| `FAA_RADAR_ENABLED` | ⚪ Optional | Boolean. Enables the FAA/military radar ingestion stubs. Default: `True`. |
-| `UAT_ENABLED` | ⚪ Optional | Boolean. Enables the low-altitude UAT (978 MHz) receiver ingestion. Default: `True`. |
-| `SATELLITE_ADSB_ENABLED` | ⚪ Optional | Boolean. Enables oceanic space-based ADS-B stubs. Default: `True`. |
-| `CELESTRAK_SATELLITES_ENABLED` | ⚪ Optional | Boolean. Enables the CelesTrak TLE fetching background runner. Default: `True`. |
-| `OPENSKY_USERNAME` | ⚪ Optional | Username for OpenSky basic authentication if OAuth is not configured. |
-| `OPENSKY_PASSWORD` | ⚪ Optional | Password for OpenSky basic authentication if OAuth is not configured. |
-| `ALLOW_IN_MEMORY_CHANNEL_LAYER` | ⚪ Optional | Boolean. Permits falling back to Django's in-memory channel layer if Redis is offline. Default: `False`. |
-| `CORS_ALLOW_CREDENTIALS` | ⚪ Optional | Boolean. Enables or disables CORS credentials flag. Default: `True`. |
-| `LOG_LEVEL` | ⚪ Optional | Logging severity threshold (DEBUG, INFO, WARNING, ERROR). Default: `INFO`. |
-| `SENTRY_DSN` | ⚪ Optional | Target DSN URL to configure Sentry error tracking integration. |
-| `DJANGO_ENV` | ⚪ Optional | Environment name tag (e.g. `production`, `development`). |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | ⚪ Optional | OTLP target endpoint for OpenTelemetry metrics/spans export. Default: `http://localhost:4317`. |
-| `METRICS_USER` | ⚪ Optional | Basic authentication username to secure the `/metrics` endpoint. |
-| `METRICS_PASSWORD` | ⚪ Optional | Basic authentication password to secure the `/metrics` endpoint. |
-| `TFR_GEOJSON_URL` | ⚪ Optional | Direct override URL to pull FAA TFR GeoJSON data directly. |
-| `CELESTRAK_REQUEST_TIMEOUT_SECONDS` | ⚪ Optional | Timeout in seconds for initial CelesTrak requests. Default: `3`. |
-| `CELESTRAK_CATALOG_TIMEOUT_SECONDS` | ⚪ Optional | Timeout in seconds for full satellite catalog requests. Default: `10`. |
-| `FLIGHT_ROUTE_LOOKBACK_HOURS` | ⚪ Optional | Time lookback window for mapping historical aircraft flight paths. Default: `12`. |
-| `FLIGHT_ROUTE_SESSION_GAP_MINUTES` | ⚪ Optional | Inactivity threshold before splitting flight routes into separate sessions. Default: `90`. |
-
-### 🎨 Frontend Configuration Parameters (`frontend/.env.local`)
-
-| Variable | Requirement | Description & Default Settings |
-| :--- | :--- | :--- |
-| `VITE_SKYWATCH_API_BASE` | ⚪ Optional | REST endpoint targeting the active backend instance. |
-| `VITE_SKYWATCH_WS_URL` | ⚪ Optional | WS protocol endpoint targeting ASGI Channel Layer routing. |
-| `OPENSKY_CLIENT_ID` | ⚪ Optional | Ingest client username (restricted to server-side context). |
-| `OPENSKY_CLIENT_SECRET`| ⚪ Optional | Ingest client secret (restricted to server-side context; never exposed to browser context). |
-| `ALLOWED_AIRCRAFT_IMAGE_HOSTS` | ⚪ Optional | Comma-separated list of permitted image API provider hostnames. Default: `adsbdb.com,photos.adsbdb.com`. |
-| `MAX_AIRCRAFT_IMAGE_BYTES` | ⚪ Optional | Maximum accepted byte size limit for fetching/caching images. Default: `5000000`. |
-
----
-
-## 🧠 Telemetry Analytics & Feature Engineering Detail
-
-To detect complex anomalies, raw flight state telemetry is expanded into a **30-dimensional normalized feature vector** within the `ml/features.py` pipeline. This vector is divided into six distinct feature groups:
-
-1.  **Kinematic Features**:
-    *   `velocity_ms`: Ground speed in meters/second.
-    *   `baro_altitude_m`: Barometric altitude in meters.
-    *   `vertical_rate_ms`: Vertical rate of climb/descent.
-    *   `heading_sin`/`heading_cos`: Sine and cosine of true track.
-    *   `ground_speed_ratio`: Current speed relative to maximum speed capability of the aircraft's ICAO category.
-    *   `mach_estimate`: Estimated Mach number using ISA temperature lapse equations.
-    *   `altitude_rate_of_change`: Direct vertical rate.
-2.  **Temporal Derivative Features**:
-    *   `acceleration_proxy`: Absolute vertical rate relative to ground speed.
-    *   `altitude_jerk`: Absolute vertical rate relative to altitude.
-    *   `heading_rate`: Rate of turn (calculated from heading history).
-    *   `signal_freshness_decay`: Time-decay indicator since last signal reception.
-    *   `position_staleness`: Latency between position time and signal time.
-    *   `contact_gap_ratio`: Ratio of lost communication to time.
-3.  **Aircraft-Type-Normalized Features**:
-    *   `velocity_z_for_category`: Z-score of velocity against the EMA category baseline.
-    *   `altitude_z_for_category`: Z-score of altitude against the EMA category baseline.
-    *   `vertical_rate_z_for_category`: Z-score of vertical rate.
-    *   `speed_envelope_violation`: Margin by which the flight exceeds category speed limits.
-4.  **Geospatial Features**:
-    *   `latitude_band`: Normalization from polar (-1) to equatorial (1).
-    *   `longitude_band`: Normalized longitudinal position.
-    *   `heading_consistency`: Tracking stability indicator.
-    *   `ground_track_curvature`: Trajectory curvature factor.
-5.  **Interaction Features**:
-    *   `altitude_velocity_product`: Scalar product of altitude and speed.
-    *   `vertical_energy_rate`: Product of climb rate and ground speed.
-    *   `kinetic_energy_proxy`: Kinetic energy indicator ($E_k \propto v^2$).
-    *   `drag_coefficient_proxy`: Aerodynamic drag estimation proxy.
-6.  **Phase-Aware Features**:
-    *   `estimated_flight_phase`: Categorization (Ground, Takeoff, Climb, Cruise, Descent, Approach).
-    *   `phase_altitude_deviation`: Altitude deviation relative to typical phase baseline.
-    *   `phase_speed_deviation`: Speed deviation relative to typical phase baseline.
-    *   `altitude_speed_ratio`: Instantaneous ratio of flight altitude to velocity.
-
----
-
-## 📊 Observability & Telemetry Metrics
-
-SkyWatch Live exposes a `/metrics` endpoint for Prometheus. Key exported metrics include:
-
-| Metric Name | Type | Description |
-| :--- | :--- | :--- |
-| `skywatch_active_flights_total` | **Gauge** | Count of active flight vectors in the cache memory. |
-| `skywatch_anomalies_detected_total` | **Counter** | Cumulative anomalies detected (labeled by `severity`: `low`, `medium`, `high`, `critical`). |
-| `skywatch_websocket_connections` | **Gauge** | Count of concurrent client connections to the ASGI Daphne server. |
-| `skywatch_data_ingestion_latency_seconds` | **Histogram** | Time taken (seconds) to ingest, parse, and commit state vectors. |
-| `skywatch_cache_hits_total` / `_misses_total` | **Counter** | System cache transaction performance flags. |
-| `skywatch_celery_task_duration_seconds` | **Histogram** | Execution duration of background tasks (labeled by `task_name`). |
-
----
-
-## 🚀 Production Deployment Runbook
-
-For production environments, organize the stack using process isolation:
-
-### ⚙️ Recommended Topography
-
-1.  **Static Distribution Layer**: Pre-build your React codebase using `npm run build` in `/frontend`, then serve static assets via high-performance web servers (e.g. Nginx or Cloudflare Edge).
-2.  **Asynchronous Web Servers**: Daphne or Uvicorn servers should handle dynamic REST API and WebSocket processes within the ASGI layer:
-    ```bash
-    daphne -b 0.0.0.0 -p 8000 skywatch.asgi:application
-    ```
-3.  **Asynchronous Task Queue**: Deploy Celery workers to process flight predictions, SGP4 orbit computations, and ingestion streams:
-    ```bash
-    celery -A skywatch worker --loglevel=INFO -Q default,high_priority
-    ```
-4.  **Time-based Task Scheduler**: Launch Celery Beat to trigger routine database cleaning and polling:
-    ```bash
-    celery -A skywatch beat --loglevel=INFO
-    ```
-5.  **Observability Exporters**: Monitor target system health metrics using the built-in Prometheus and Grafana structures.
-
----
-
-### 🛡️ Pre-Release Audit Script
-
-Run this verification chain inside your CI/CD runner prior to deploying any production branch:
+Start Celery and Beat separately when you need backend ingestion:
 
 ```bash
-# 1. Run complete testing suites and typescript checks
-npm test
+npm run backend:celery
+npm run backend:beat
+```
 
-# 2. Run Django production configuration audits
+### Local URLs
+
+| Service | URL |
+| :--- | :--- |
+| Frontend dashboard | `http://localhost:5173` |
+| Django API | `http://localhost:8000/api/v1/` |
+| Django admin | `http://localhost:8000/admin/` |
+| Prometheus metrics | `http://localhost:8000/metrics` |
+| Prometheus UI | `http://localhost:9090` |
+| Grafana | `http://localhost:3001` (`admin` / `admin`) |
+| Jaeger | `http://localhost:16686` |
+| Liveness | `http://localhost:8000/healthz/`, `http://localhost:8000/health/live` |
+| Readiness | `http://localhost:8000/readyz/`, `http://localhost:8000/health/ready` |
+| JSON health metrics | `http://localhost:8000/health/metrics` |
+
+`/health/ready` checks database, cache, and Celery worker responsiveness. It will report an error until a Celery worker is running.
+
+## Commands
+
+| Command | Purpose |
+| :--- | :--- |
+| `npm run dev` | Start the TanStack Start/Vite frontend server. |
+| `npm run backend:dev` | Start Django `runserver` through `scripts/backend-manage.mjs`. |
+| `npm run dev-all` | Start frontend and Django API servers concurrently. |
+| `npm run backend:celery` | Start a Celery worker with `-A skywatch`. |
+| `npm run backend:beat` | Start Celery Beat with `-A skywatch`. |
+| `npm run check` | Frontend typecheck, lint, and production build. |
+| `npm run backend:check` | Django system check. |
+| `npm run backend:check-deploy` | Django deployment security check. |
+| `npm run backend:migrate` | Apply Django migrations. |
+| `npm run backend:makemigrations` | Generate Django migrations. |
+| `npm run backend:test` | Run Django tests. |
+| `npm test` | Run frontend check and backend tests. |
+| `npm run docker:up` | Start Docker Compose services. |
+| `npm run docker:down` | Stop Docker Compose services. |
+| `npm run docker:logs` | Follow Docker Compose logs. |
+| `npm run generate:airports` | Regenerate the frontend airport data module. |
+
+## Backend Configuration
+
+Never commit `.env`, `.env.local`, credentials, generated secrets, or production connection strings.
+
+| Variable | Required | Description |
+| :--- | :--- | :--- |
+| `DJANGO_SECRET_KEY` | Required outside debug | Django signing/session secret. |
+| `DJANGO_DEBUG` | Required | `True` for local development, `False` for production. |
+| `ALLOWED_HOSTS` | Required outside debug | Comma-separated public hostnames/IPs. |
+| `CSRF_TRUSTED_ORIGINS` | Production | HTTPS origins allowed for CSRF validation. |
+| `CORS_ALLOWED_ORIGINS` | Production | Frontend origins allowed by CORS. |
+| `CORS_ALLOWED_ORIGIN_REGEXES` | Optional | Regex origin allow-list. Local debug defaults include localhost ports. |
+| `CORS_ALLOW_ALL_ORIGINS` | Local only | Rejected when `DJANGO_DEBUG=False`. |
+| `DATABASE_URL` or `DJANGO_DATABASE_URL` | Required outside debug | PostgreSQL connection string. SQLite is used only when debug is true and no database URL is set. |
+| `READ_REPLICA_DATABASE_URL` | Optional | Read-replica PostgreSQL URL for analytics queries. |
+| `REDIS_URL` | Required unless explicit local fallback | Redis cache, Channels layer, Celery broker, and Celery result backend. |
+| `ALLOW_IN_MEMORY_CHANNEL_LAYER` | Local only | Allows in-memory cache/channel fallback when Redis is unavailable. |
+| `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET` | Optional | OpenSky OAuth client credentials. |
+| `OPENSKY_USERNAME` / `OPENSKY_PASSWORD` | Optional | Legacy OpenSky basic auth fallback. |
+| `ADSBONE_ENABLED` | Optional | Enables ADS-B One point-feed ingestion. Default: `True`. |
+| `AIRPLANESLIVE_ENABLED` | Optional | Enables Airplanes.live ADS-B point-feed ingestion. Default: `True`. |
+| `ADSBLOL_ENABLED` | Optional | Enables ADSB.lol point-feed ingestion. Default: `True`. |
+| `OGN_ENABLED` | Optional | Enables Open Glider Network/FLARM ingestion. Default: `True`. |
+| `FAA_RADAR_ENABLED` | Optional | Enables the Airplanes.live `/v2/mil` FAA/military radar client. Default: `True`. |
+| `UAT_ENABLED` | Optional | Enables Airplanes.live UAT/TIS-B regional point-feed ingestion. Default: `True`. |
+| `SATELLITE_ADSB_ENABLED` | Optional | Enables Airplanes.live oceanic satellite ADS-B point-feed ingestion. Default: `True`. |
+| `CELESTRAK_SATELLITES_ENABLED` | Optional | Enables the Django satellite catalog endpoint. Default: `True`. |
+| `CELESTRAK_REQUEST_TIMEOUT_SECONDS` | Optional | Per-group CelesTrak request timeout. Default: `3`. |
+| `CELESTRAK_CATALOG_TIMEOUT_SECONDS` | Optional | Total satellite catalog request budget. Default: `10`. |
+| `CELESTRAK_LIVE_BACKOFF_SECONDS` | Optional | Backoff after CelesTrak failures before retrying live source. Default: `120`. |
+| `TFR_GEOJSON_URL` | Optional | Override for FAA TFR GeoJSON. |
+| `FLIGHT_ROUTE_LOOKBACK_HOURS` | Optional | Lookback for route reconstruction. Default: `12`. |
+| `FLIGHT_ROUTE_SESSION_GAP_MINUTES` | Optional | Gap before splitting route sessions. Default: `90`. |
+| `METRICS_USER` / `METRICS_PASSWORD` | Optional | Basic auth for `/metrics`. |
+| `SENTRY_DSN` | Optional | Enables backend Sentry integration. |
+| `DJANGO_ENV` | Optional | Environment tag for logs/Sentry. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | OpenTelemetry OTLP endpoint. Default: `http://localhost:4317`. |
+| `LOG_LEVEL` | Optional | Python logging level. Default: `INFO`. |
+| `DJANGO_SECURE_SSL_REDIRECT` | Production | HTTPS redirect flag. |
+| `DJANGO_SECURE_HSTS_SECONDS` | Production | HSTS max age. Defaults to `31536000` outside debug. |
+| `DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS` | Production | HSTS include-subdomains flag. |
+| `DJANGO_SECURE_HSTS_PRELOAD` | Production | HSTS preload flag. |
+| `DJANGO_SESSION_COOKIE_SECURE` | Production | Secure session cookies. Defaults to true outside debug. |
+| `DJANGO_CSRF_COOKIE_SECURE` | Production | Secure CSRF cookies. Defaults to true outside debug. |
+
+## Frontend Configuration
+
+| Variable | Required | Description |
+| :--- | :--- | :--- |
+| `VITE_SKYWATCH_API_BASE` | Optional | Django backend root or `/api/v1` base. If omitted, frontend utilities try relative routes and local Django at `http://127.0.0.1:8000`. |
+| `VITE_SKYWATCH_WS_URL` | Optional | Explicit WebSocket URL for `/ws/flights/`. If omitted, the frontend derives it from `VITE_SKYWATCH_API_BASE`. |
+| `VITE_SKYWATCH_API_URL` / `VITE_API_URL` | Optional | Backward-compatible API base aliases. |
+| `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET` | Optional | Server-side TanStack Start route credentials for OpenSky. These are not browser-exposed because they are not `VITE_` variables. |
+| `ALLOWED_AIRCRAFT_IMAGE_HOSTS` | Optional | Comma-separated image proxy host allow-list. Default: `adsbdb.com,photos.adsbdb.com`. |
+| `MAX_AIRCRAFT_IMAGE_BYTES` | Optional | Maximum aircraft image proxy response size. Default: `5000000`. |
+| `VITE_SENTRY_DSN` | Optional | Enables frontend Sentry. |
+| `VITE_BUILD_SHA` | Optional | Frontend release tag for Sentry. |
+
+## REST API
+
+All primary backend endpoints are under `/api/v1/`.
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/v1/flights/` | Current fresh flight states from cache, falling back to recent database rows. |
+| `GET` | `/api/v1/flights/<icao24>/` | Aircraft detail, latest state, recent route, and active anomalies. |
+| `GET` | `/api/v1/flights/<icao24>/route/` | Route sessions and track intelligence for an aircraft. |
+| `GET` | `/api/v1/playback/` | Authenticated historical position playback by ICAO24 and time range. |
+| `GET` | `/api/v1/predictions/<icao24>/` | 1, 2, 3, 5, and 10 minute position predictions from the latest airborne state. |
+| `GET` | `/api/v1/anomalies/` | Active anomalies. |
+| `GET` | `/api/v1/anomalies/history/` | Historical anomalies with pagination. |
+| `GET` | `/api/v1/anomalies/<id>/explanation/` | Explainability payload for an anomaly. |
+| `POST` | `/api/v1/anomalies/<id>/feedback/` | Authenticated true-positive/false-positive feedback. |
+| `GET` | `/api/v1/analytics/` | Live dashboard summary. |
+| `GET` | `/api/v1/analytics/timeline/` | Historical metrics timeline. |
+| `GET` | `/api/v1/analytics/traffic/` | Hourly active aircraft counts. |
+| `GET` | `/api/v1/analytics/routes/` | Most active origin/destination pairs from stored states. |
+| `GET` | `/api/v1/analytics/anomaly-rate/` | Daily anomalies per 100 flights. |
+| `GET` | `/api/v1/analytics/aircraft-types/` | Top aircraft type counts. |
+| `GET` | `/api/v1/weather/metar/` | Parsed METAR reports for requested stations. |
+| `GET` | `/api/v1/airspace/tfr/` | Current airspace restriction GeoJSON. |
+| `GET` | `/api/v1/airspace/restrictions/` | Same restriction collection used by the map overlay. |
+| `GET` / `POST` | `/api/v1/alert-rules/` | List or create operator alert rules. |
+| `PATCH` / `DELETE` | `/api/v1/alert-rules/<id>/` | Update or delete an alert rule. |
+| `GET` | `/api/v1/sources/` | Current source breakdown and source metadata. |
+| `GET` | `/api/v1/satellites/` | CelesTrak satellite catalog propagated with SGP4. |
+
+Legacy compatibility paths also exist for `/api/weather/metar`, `/api/airspace/tfr`, `/api/airspace/restrictions`, and `/api/playback`.
+
+## WebSockets
+
+The flight stream is served by Django Channels at:
+
+```text
+/ws/flights/
+```
+
+The server broadcasts:
+
+- `flight_update`: committed flight snapshots with source counts.
+- `anomaly_alert`: newly persisted anomaly events.
+- ping/pong health traffic handled by the consumer.
+
+The frontend falls back to polling if the WebSocket is unavailable.
+
+## Background Jobs
+
+Celery Beat currently schedules:
+
+| Schedule | Task | Purpose |
+| :--- | :--- | :--- |
+| 15 seconds | `flights.tasks.fetch_flight_states` | Fetch, normalize, merge, persist, cache, and broadcast flight states. |
+| 30 seconds | `flights.tasks.update_flight_predictions` | Update short-horizon predicted paths for recent active flights. |
+| 30 seconds | `flights.tasks.evaluate_custom_alert_rules` | Evaluate saved threshold/geofence alert rules against current flights. |
+| 5 minutes | `flights.tasks.refresh_tfr_cache` | Refresh AWC SIGMET and FAA TFR restriction cache. |
+| 5 minutes | `flights.tasks.synthetic_health_check` | Probe the configured health URL and record Redis failure counts. |
+
+Additional callable tasks include anomaly detection, route building, metadata enrichment, cleanup, and model retraining. Some are triggered after ingestion commits rather than directly by Beat.
+
+## Machine Learning
+
+The core anomaly model is implemented in `backend/flights/services/anomaly_detector.py`.
+
+- Rule checks cover emergency squawks, low-fast profiles, rapid descent, signal loss, unusual kinematics, and position quality.
+- Feature extraction uses the 30-dimensional feature pipeline in `backend/ml/features.py`.
+- The ensemble path can train Isolation Forest, Local Outlier Factor, and MLP autoencoder components using scikit-learn.
+- `backend/ml/train.py` can train from recent database states or synthetic bootstrap data.
+- `backend/ml/lstm.py` is optional and import-safe. `python manage.py train_lstm_anomaly` only trains when TensorFlow/Keras is installed and enough sequences exist.
+- Explainability is generated by `backend/flights/services/explainability.py` and exposed through anomaly endpoints.
+
+## Observability
+
+The backend exposes Prometheus metrics at `/metrics`. If `METRICS_USER` or `METRICS_PASSWORD` is set, clients must send HTTP Basic auth.
+
+Key application metrics:
+
+| Metric | Type | Description |
+| :--- | :--- | :--- |
+| `skywatch_active_flights_total` | Gauge | Current active flights. |
+| `skywatch_anomalies_detected_total` | Counter | Anomalies detected by severity. |
+| `skywatch_websocket_connections` | Gauge | Open WebSocket connections. |
+| `skywatch_data_ingestion_latency_seconds` | Histogram | Flight ingestion latency. |
+| `skywatch_cache_hits_total` / `skywatch_cache_misses_total` | Counter | Cache usage counters. |
+| `skywatch_celery_task_duration_seconds` | Histogram | Celery task duration by task name. |
+
+Docker Compose provisions Prometheus on `9090`, Grafana on `3001`, and Jaeger on `16686`. Update `monitoring/prometheus.yml` credentials before using the monitoring stack outside local development.
+
+## Production Runbook
+
+1. Create production `backend/.env` values with `DJANGO_DEBUG=False`, a strong `DJANGO_SECRET_KEY`, exact `ALLOWED_HOSTS`, exact CORS/CSRF origins, production PostgreSQL, Redis, metrics credentials, and secure cookie/HSTS settings.
+2. Install backend dependencies in an isolated Python environment:
+
+   ```bash
+   cd backend
+   python -m pip install -r requirements.txt
+   python manage.py migrate --noinput
+   python manage.py collectstatic --noinput
+   python manage.py check --deploy
+   ```
+
+3. Build the frontend:
+
+   ```bash
+   cd frontend
+   npm ci
+   npm run check
+   ```
+
+4. Run the ASGI app behind a TLS-terminating reverse proxy:
+
+   ```bash
+   cd backend
+   daphne -b 0.0.0.0 -p 8000 skywatch.asgi:application
+   ```
+
+5. Run Celery worker and Beat as separate managed processes:
+
+   ```bash
+   cd backend
+   celery -A skywatch worker --loglevel=INFO
+   celery -A skywatch beat --loglevel=INFO
+   ```
+
+6. Point the frontend at the backend with `VITE_SKYWATCH_API_BASE` and `VITE_SKYWATCH_WS_URL`.
+7. Configure Prometheus/Grafana with production credentials and scrape targets.
+8. Add a retention policy for high-volume `FlightPosition` and `FlightState` data if the deployment will run continuously for long periods.
+
+## Verification
+
+Recommended pre-release checks:
+
+```bash
+npm run check
+npm run backend:check
+npm run backend:check-deploy
+npm run backend:test
+```
+
+For migration drift:
+
+```bash
 cd backend
-python manage.py check --deploy
 python manage.py makemigrations --check --dry-run
 python manage.py migrate --check
-python manage.py collectstatic --noinput --clear
 ```
 
----
+For Celery command wiring:
 
-## 🛡️ Security & Integrity Checklist
-
-- [ ] Verify `DJANGO_DEBUG` is disabled (`False`) in the production environment.
-- [ ] Enforce HTTPS-only routing and configure HSTS policies on Nginx/LB level.
-- [ ] Restrict database incoming traffic to encrypted connections only (`sslmode=require`).
-- [ ] Enforce CORS strict configurations (`CORS_ALLOWED_ORIGINS` mapped exactly to frontend).
-- [ ] Set up automated container checks and cluster health queries referencing `/healthz/` and `/readyz/` endpoints.
-
----
-
-## 🔍 Troubleshooting
-
-<details>
-<summary><b>❌ Connection Failure: DJANGO_SECRET_KEY is required</b></summary>
-<br>
-
-This indicates that Django cannot find a valid secret key. Copy the `backend/.env.example` template to `backend/.env`, populate `DJANGO_SECRET_KEY` with a strong random string, or execute the rapid bootstrap command:
-```powershell
-npm run startup
-```
-</details>
-
-<details>
-<summary><b>❌ Connection Failure: ALLOWED_HOSTS must be set</b></summary>
-<br>
-
-When `DJANGO_DEBUG=False`, Django requires explicit host verification to protect against host header injections. Ensure `ALLOWED_HOSTS` in your `backend/.env` lists the public IP or DNS address of your backend web server.
-</details>
-
-<details>
-<summary><b>❌ Connection Failure: WebSockets or Celery fails with Redis errors</b></summary>
-<br>
-
-SkyWatch Channels and queue structures rely heavily on Redis. Ensure your Redis container is running:
 ```bash
-docker compose up -d redis
+npm run backend:celery -- --help
+npm run backend:beat -- --help
 ```
-If you are running Redis on a non-standard port or external cloud server, double-check your connection string in `REDIS_URL`.
-</details>
 
-<details>
-<summary><b>❌ Network Failure: Frontend cannot access Backend REST endpoints</b></summary>
-<br>
+## Operational Limits
 
-Confirm that `VITE_SKYWATCH_API_BASE` is pointing to the correct port (usually `http://localhost:8000` when running Django locally) and verify that the backend's `CORS_ALLOWED_ORIGINS` matches the frontend's address exactly.
-</details>
+- Public feeds can rate-limit or return sparse regional coverage. OpenSky public access is especially rate-limited; credentials improve but do not remove all upstream constraints.
+- Airplanes.live radar, UAT, and satellite ADS-B clients are functional public aggregator clients, but coverage still depends on what the aggregator receives and exposes.
+- Satellite ADS-B classification uses explicit `sat` markers where present and oceanic heuristics where public payloads omit a direct satellite flag.
+- CelesTrak fallback TLEs are intentionally labeled as bootstrap data and can be stale. Use the `orbit_quality`, `source`, and `errors` fields when displaying or consuming satellite payloads.
+- Redis fallback is suitable only for local single-process development. It is not a horizontally scalable Channels or Celery backend.
+- LSTM scoring is optional. Without TensorFlow/Keras and a trained model file, the Isolation Forest/rule path continues without sequence scores.
+- `FlightPosition` is append-only in the current implementation. Long-running production deployments should add scheduled retention or partitioning appropriate to their storage budget.
 
----
+## Distribution Terms
 
-## ⚠️ System Operational Limitations
-
-Note the following operational and hardware constraints within the platform:
-
-1. **Redis Scalability Fallback**: When Redis is offline, the system degrades to a non-distributed `InMemoryChannelLayer` and local memory cache. WebSockets and cached states will not sync across horizontally scaled backend servers in this fallback state.
-2. **OpenSky Telemetry Throttling**: The public OpenSky API enforces strict request rate limits. In local dev, the ingestion worker is configured for a 15-second polling window to prevent IP banning. Upgrading to a registered airline/operator API tier is required for sub-second telemetry updates.
-3. **ML Initialization & Retraining**: Anomaly detection models (Isolation Forest, Local Outlier Factor, Autoencoder) require initial training datasets to generate serialized artifacts in `ml/models/`. Baseline heuristic rules are used to score anomalies until the initial training task is successfully triggered.
-4. **WebSocket Connection Failover**: In the event of network disruption, the frontend attempts to reconnect to the WebSocket server exactly 5 times using an exponential backoff. If all retries fail, it falls back to polling via HTTP REST requests every 15 seconds.
-5. **Transient State Vector Storage**: To maintain high throughput, raw kinematic coordinates are cached in Redis. Only flagged anomaly events, user feedback overrides, and custom alert rules are persisted in the PostgreSQL database. Live flight tracking routes are limited to a sliding 12-hour lookback window.
-6. **CPU-Bound Inference**: LSTM trajectory forecasting executes on the standard CPU path of the server. In high-density airspaces containing more than 500 active targets, CPU usage may spike during inference, requiring dedicated hardware acceleration (GPUs) or multi-node worker scaling.
-7. **Surveillance & Ingest Feed Limitations**:
-   * **FAA Radar & Space-based ADS-B**: Oceanic satellite telemetry and military secondary radar stubs require commercial/defense licensing keys and secure VPN endpoints. The default developer profile runs mock models for these data streams.
-   * **Aeronautical NOTAM Feeds**: Official live NOTAM (Notice to Air Missions) distribution feeds are gated behind paid subscriptions and state agency credentials. The platform uses public FAA TFR geofences and AWC SIGMET endpoints as free, baseline airspace warnings.
-   * **Encrypted/Tactical Transponders**: Low-altitude UAT (978 MHz) and FLARM volunteer networks (OGN) are dependent on community-receiver proximity and cannot provide guaranteed or continuous global coverage. Encrypted transponders (such as military Mode-5 or Link-16) are excluded from public state vectors.
+No license file is present in this repository snapshot. Add an explicit license before public redistribution.
