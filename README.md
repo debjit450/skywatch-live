@@ -536,6 +536,51 @@ In `backend/ml/features.py`, the 30-dimensional vector pipeline designed for mac
 
 
 
-## Distribution Terms
+## Contributing
 
-No license file is present in this repository snapshot. Add an explicit license before public redistribution.
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+- Getting started
+- Development setup
+- Testing
+- Code standards
+- Reporting issues
+- Pull request process
+
+## License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+You are free to:
+- ✅ Use commercially
+- ✅ Modify the code
+- ✅ Distribute copies
+- ✅ Use privately
+
+You must:
+- ✅ Include the original license and copyright notice
+
+You cannot:
+- ❌ Hold the authors liable
+
+## Citation
+
+If you use SkyWatch Live in your research, please cite:
+
+```bibtex
+@software{skywatch-live,
+  title={SkyWatch Live: Airspace Surveillance with Real-Time Anomaly Detection},
+  author={SkyWatch Live Contributors},
+  year={2024},
+  url={https://github.com/debjit450/skywatch-live}
+}
+```
+
+## Acknowledgments
+
+SkyWatch Live integrates with numerous open-source projects and public aviation data sources:
+- [Django](https://www.djangoproject.com/) and [Django REST Framework](https://www.django-rest-framework.org/)
+- [React](https://react.dev/) and [TanStack](https://tanstack.com/)
+- [Celery](https://docs.celeryproject.org/)
+- [OpenSky Network](https://opensky-network.org/)
+- [Leaflet](https://leafletjs.com/)
+- And many more dependencies listed in `requirements.txt` and `package.json`

@@ -1,5 +1,6 @@
 {
   "name": "skywatch-live",
+  "license": "MIT",
   "private": true,
   "sideEffects": false,
   "type": "module",
