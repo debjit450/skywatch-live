@@ -78,10 +78,10 @@ function mergeDisplayTrack(
   const lastBasePoint = basePoints[basePoints.length - 1];
   const livePoints = lastBasePoint
     ? liveTrail.filter(
-      (point) =>
-        flightTrackPointTimeMs(point) > flightTrackPointTimeMs(lastBasePoint) + 1_000 &&
-        flightTrackDistanceKm(point, lastBasePoint) > MIN_TRAIL_DISTANCE_KM,
-    )
+        (point) =>
+          flightTrackPointTimeMs(point) > flightTrackPointTimeMs(lastBasePoint) + 1_000 &&
+          flightTrackDistanceKm(point, lastBasePoint) > MIN_TRAIL_DISTANCE_KM,
+      )
     : liveTrail;
 
   if (livePoints.length > 0) {
@@ -391,10 +391,10 @@ function Index() {
       const predicted = predictFlightState(selectedFlight);
       return predicted.latitude !== null && predicted.longitude !== null
         ? {
-          lat: predicted.latitude,
-          lng: predicted.longitude,
-          id: `${selectedFlight.icao24}-${isFollowingSelected ? (lastUpdated ?? focusKey) : focusKey}`,
-        }
+            lat: predicted.latitude,
+            lng: predicted.longitude,
+            id: `${selectedFlight.icao24}-${isFollowingSelected ? (lastUpdated ?? focusKey) : focusKey}`,
+          }
         : null;
     }
 
@@ -404,10 +404,10 @@ function Index() {
         const predicted = predictFlightState(helicopter);
         return predicted.latitude !== null && predicted.longitude !== null
           ? {
-            lat: predicted.latitude,
-            lng: predicted.longitude,
-            id: `helicopter-${helicopter.icao24}-${visibleFlights.length}-${focusKey}`,
-          }
+              lat: predicted.latitude,
+              lng: predicted.longitude,
+              id: `helicopter-${helicopter.icao24}-${visibleFlights.length}-${focusKey}`,
+            }
           : null;
       }
     }
@@ -423,10 +423,10 @@ function Index() {
     const country = COUNTRIES.find((c) => c.name === selectedCountry);
     return country
       ? {
-        lat: country.lat,
-        lng: country.lng,
-        id: `country-${country.code}-${focusKey}`,
-      }
+          lat: country.lat,
+          lng: country.lng,
+          id: `country-${country.code}-${focusKey}`,
+        }
       : null;
   }, [
     flightFilters.aircraftClass,
