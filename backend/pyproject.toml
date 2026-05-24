@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skywatch-live"
+version = "1.0.0"
+description = "Airspace surveillance, satellite situational awareness, and anomaly detection for live public aviation data"
+readme = "../README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "SkyWatch Live Contributors"}
+]
+keywords = [
+    "aviation",
+    "surveillance",
+    "anomaly-detection",
+    "satellite",
+    "airspace",
+    "adsb",
+    "flights",
+    "django",
+    "celery",
+    "websocket"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: Django :: 5.0",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+[project.urls]
+Homepage = "https://github.com/debjit450/skywatch-live"
+Repository = "https://github.com/debjit450/skywatch-live.git"
+Documentation = "https://github.com/debjit450/skywatch-live/tree/main/docs"
+Issues = "https://github.com/debjit450/skywatch-live/issues"
+
+[tool.setuptools]
+packages = ["skywatch", "flights", "ml"]

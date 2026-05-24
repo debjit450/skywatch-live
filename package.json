@@ -1,6 +1,12 @@
 {
   "name": "skywatch-live-root",
-  "private": true,
+  "license": "MIT",
+  "private": false,
+  "description": "Airspace surveillance, satellite situational awareness, and anomaly detection for live public aviation data",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/debjit450/skywatch-live.git"
+  },
   "scripts": {
     "dev": "npm run --prefix frontend dev",
     "dev-all": "node scripts/dev-all.mjs",
