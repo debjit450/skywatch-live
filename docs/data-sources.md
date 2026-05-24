@@ -1,55 +1,82 @@
-# Data Sources & Source Reliability Contract
+# Data Sources and Source Reliability Contract
 
-SkyWatch Live gathers data from several public aviation feeds, APRS socket feeds, meteorological reports, and space catalogs. These sources are inherently volatile; the application is built from the ground up to assume all sources can fail independently, treating missing sources as degraded regional coverage rather than a system-wide failure.
+Last reviewed: 2026-05-24.
 
----
+SkyWatch Live reads from public aviation feeds, APRS socket feeds, meteorological reports, satellite catalogs, and metadata/photo sources. These upstreams are volatile by design. The application treats feed loss as degraded coverage, not as a global application failure.
 
-## 1. Registered Sources Catalog
+## Registered Sources
 
-| Source | Identifier | Confidence | Ingestion Strategy / API Contract | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| **OpenSky Network** | `opensky` | **0.96** | REST HTTP GET to `/states/all` (extended properties). OAuth client credentials or legacy basic auth improves rate limits. | Primary baseline feed. Public queries rate-limit and throttle frequently. |
-| **ADS-B One** | `adsb_one` | **0.90** | Concurrent regional point queries (`/v2/point/{lat}/{lon}/{rad}`) around key hubs. | Deduplicated by ICAO24 against OpenSky. |
-| **Airplanes.live** | `airplanes_live` | **0.90** | Regional point queries mapped to OpenSky structure. | Solid secondary ADSB aggregator. |
-| **ADSB.lol** | `adsb_lol` | **0.86** | Regional point queries. | Excellent supplemental receiver community. |
-| **Open Glider Network** | `ogn` | **0.82** | Raw TCP connection to APRS-IS glider sockets (`aprs.glidernet.org:14580`). | Captures gliders, small FLARM transponders. |
-| **FAA / Mil Radar** | `faa_radar` | **0.78** | REST HTTP GET call to `/v2/mil` endpoint. | Decodes government/military and state aircraft. |
-| **UAT / TIS-B** | `uat` | **0.80** | Multi-point query targeting major US hubs, filtering UAT markers (`adsb_icao_uat`, etc.). | Identifies small US General Aviation (978 MHz). |
-| **Satellite ADS-B** | `satellite` | **0.74** | Oceanic point queries, filtering explicit satellite metadata flags. | Tracks ocean crossings (Honolulu, Azores, Fiji, etc.). |
-| **Aviation Weather Center** | `weather` | N/A | REST requests to `/api/data/metar` and `/api/data/isigmet`. | Decodes meteorological reports and weather cards. |
-| **FAA TFR** | `tfr` | N/A | FAA WFS GeoJSON feed endpoints. | Renders live temporary airspace restrictions. |
-| **ADSBDB Metadata** | `adsbdb` | N/A | REST HTTP GET to `api.adsbdb.com/v0`. | Used for aircraft photos and manufacturer lookups. |
+| Source | Identifier | Base confidence | Code path | Endpoint / protocol | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| OpenSky Network | `opensky` | `0.96` | `backend/flights/services/opensky.py`, `frontend/src/routes/api/flights.ts` | `https://opensky-network.org/api/states/all?extended=1` | Primary baseline feed. OAuth client credentials or legacy username/password improve rate limits. |
+| ADS-B One | `adsb_one` | `0.90` | `backend/flights/services/adsb_sources.py` | `https://api.adsb.one/v2/point/{lat}/{lon}/{rad}` | Regional hub point queries, normalized to the OpenSky-shaped object. |
+| Airplanes.live ADS-B | `airplanes_live` | `0.90` | `backend/flights/services/adsb_sources.py` | `https://api.airplanes.live/v2/point/{lat}/{lon}/{rad}` | Supplemental ADS-B point-feed coverage. |
+| ADSB.lol | `adsb_lol` | `0.86` | `backend/flights/services/adsb_sources.py` | `https://api.adsb.lol/v2/point/{lat}/{lon}/{rad}` | Supplemental public receiver network. |
+| Open Glider Network | `ogn` | `0.82` | `backend/flights/services/ogn_client.py` | APRS-IS at `aprs.glidernet.org:14580` | FLARM/OGN gliders and small aircraft. |
+| UAT / TIS-B | `uat` | `0.80` | `backend/flights/services/uat_client.py` | Airplanes.live point feeds | US hub queries filtered by UAT/TIS-B type markers. |
+| FAA / military radar aggregate | `faa_radar` | `0.78` | `backend/flights/services/faa_radar.py` | `https://api.airplanes.live/v2/mil` | Public military/government aircraft aggregate from Airplanes.live. |
+| Satellite ADS-B | `satellite` | `0.74` | `backend/flights/services/satellite_adsb.py` | Airplanes.live oceanic point feeds | Oceanic hub queries filtered by satellite flags and remote-position heuristics. |
+| CelesTrak | `celestrak` | N/A | `backend/flights/services/celestrak.py`, `frontend/src/routes/api/satellites.ts` | `https://celestrak.org/NORAD/elements/gp.php` | TLE/GP element catalog used for SGP4 sub-satellite propagation. |
+| Aviation Weather Center | `weather` | N/A | `backend/flights/services/weather.py`, `backend/flights/services/airspace_restrictions.py` | `aviationweather.gov/api/data/metar`, `airsigmet`, `isigmet` | METAR cards and SIGMET airspace overlays. |
+| FAA TFR | `tfr` | N/A | `backend/flights/services/airspace_restrictions.py` | FAA WFS GeoJSON feed, overrideable with `TFR_GEOJSON_URL` | Temporary flight restriction GeoJSON overlay. |
+| ADSBDB | `adsbdb` | N/A | `frontend/src/routes/api/enrichment.ts`, `frontend/src/routes/api/photo.ts`, `backend/flights/services/aircraft_db.py` | `https://api.adsbdb.com/v0` | Aircraft metadata and photo proxy support. Backend metadata can also use the OpenSky aircraft database CSV. |
 
----
+## Merge and Deduplication Contract
 
-## 2. Ingestion Merging & Prioritization
+The current ingestion implementation lives in `backend/flights/tasks.py`.
 
-To resolve geographical overlapping and source metadata conflicts, the ingestion engine uses a strict prioritization contract:
-1. **Deduplication:** The primary key is the lowercase 6-character ICAO24 hex address.
-2. **Prioritization:** If an aircraft is found across multiple feeds during a single ingestion cycle, the record from the feed with the **highest Base Confidence Score** is preserved.
-3. **Provenance Annotation:** The final saved flight state metadata registers the active `data_source` and preserves the `source_provenance` array tracking all feeds that captured the aircraft in the current window.
-4. **Source Conflicts:** If critical discrepancies (such as differing callsigns or >1 NM altitude/position splits) are encountered during deduplication, a `source_conflict_count` is logged for auditing.
+1. OpenSky is fetched first. The result is treated as the required baseline source.
+2. Enabled supplemental sources are fetched through `run_source_fetch`.
+3. Invalid rows are rejected unless they contain a lowercase-normalizable 6-character ICAO24 hex address.
+4. Rows are merged by ICAO24. If multiple rows report the same aircraft, the row with the newest `last_contact` wins.
+5. `source_provenance` preserves the set of sources that reported the aircraft during the current cycle.
+6. `source_conflicts` records recent conflicts when position distance exceeds 8 km or last-contact deltas exceed 45 seconds.
+7. `data_source`, `source_confidence`, `source_provenance`, `source_conflicts`, `source_counts`, and `source_health` are surfaced to the frontend.
 
----
+Source confidence is an operational quality signal. It is not the only merge priority and does not override a fresher contact timestamp.
 
-## 3. Source Reliability Contract & Circuit Breaker Logic
+## Reliability Contract
 
-The `IngestionSourceHealth` and `source_adapters.py` wrapper regulates all source ingestion tasks to enforce service reliability:
+`backend/flights/services/source_adapters.py` wraps each upstream fetch and persists health state in `IngestionSourceHealth` plus append-only rows in `IngestionAudit`.
 
-### Health Contract Metric Variables
-Each source health adapter tracks:
-* `status`: One of `"ok"`, `"error"`, `"rate_limited"`, `"circuit_open"`, or `"disabled"`.
-* `confidence_score`: Calculated dynamically from base confidence and failures.
-* `consecutive_failures`: Incremented on network timeout or HTTP error.
-* `latency_ms`: Duration of the last API call.
-* `aircraft_count`: Total aircraft vectors returned.
-* `rate_limited_until`: Future timestamp indicating when upstream throttling expires.
-* `circuit_open_until`: Future timestamp indicating when the circuit breaker closes.
+| Field | Meaning |
+| :--- | :--- |
+| `status` | One of `ok`, `disabled`, `rate_limited`, `degraded`, `circuit_open`, or `error`. |
+| `enabled` | Whether the source is configured for ingestion. |
+| `confidence_score` | Base confidence adjusted by the current health state. |
+| `consecutive_failures` | Network or response failures since the last successful fetch. |
+| `latency_ms` | Duration of the most recent fetch. |
+| `aircraft_count` | Number of source rows returned. |
+| `normalized_count` | Number of rows normalized by the source adapter. |
+| `rejected_count` | Number of rows rejected during normalization. |
+| `rate_limited_until` | Cooldown timestamp for HTTP 429 or skipped payloads. |
+| `circuit_open_until` | Cooldown timestamp for open circuit breakers. |
 
-### Circuit Breaker Mechanics
-* **Trigger:** If a source experiences **3 consecutive failures** (or 2 for OpenSky due to its critical nature), its circuit breaker state switches to `"circuit_open"`.
-* **Execution Bypass:** For the next **120 seconds** (`circuit_breaker_seconds`), all ingestion calls to that source are immediately aborted and returned as an empty list, protecting the ingestion task from long HTTP hanging timeouts.
-* **Confidence Decay:** When a source enters an unhealthy state, its confidence score decays:
-  $$\text{Confidence} = \max(0.05, \text{Base Confidence} - (\text{Consecutive Failures} \times 0.12))$$
-* **Rate Limits:** If an HTTP 429 is encountered, the source status becomes `"rate_limited"` and is bypassed for **120 seconds**.
+## Circuit Breaker Behavior
 
+- A source opens its circuit after 3 consecutive failures. OpenSky uses a stricter threshold of 2 because it is the baseline feed.
+- An open circuit is bypassed for 120 seconds by default.
+- HTTP 429 or no-payload responses are treated as rate-limited and bypassed for 120 seconds by default.
+- Required source failures are raised to the calling task; optional source failures return an empty payload and mark the source degraded.
+- Confidence scores decay from the base score when the source is unhealthy and drop to `0.0` when disabled.
+
+## Frontend-Only Data Path
+
+Frontend-only mode uses TanStack Start server routes instead of the Django ingestion pipeline:
+
+| Route | Source |
+| :--- | :--- |
+| `/api/flights` | OpenSky states with optional OAuth token and stale-position filtering. |
+| `/api/satellites` | CelesTrak TLE groups with bundled bootstrap fallback records. |
+| `/api/enrichment` | ADSBDB and route metadata helpers. |
+| `/api/photo` | Aircraft image proxy restricted by `ALLOWED_AIRCRAFT_IMAGE_HOSTS`. |
+| `/api/flight-track` | OpenSky aircraft track lookup. |
+
+This mode has no PostgreSQL history, Celery ingestion, Redis cache, or WebSocket fanout.
+
+## Operational Caveats
+
+- Public receiver networks do not guarantee full geographic coverage.
+- API quotas, throttling, and upstream schema changes can reduce live coverage without breaking the application.
+- Do not use this project as the sole source for safety-of-life, air traffic control, emergency response, or regulatory decisions.
+- Review every upstream source's current usage terms before operating a public or commercial deployment.

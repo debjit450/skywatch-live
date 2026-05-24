@@ -1,83 +1,73 @@
 # SkyWatch Live Quick Start
 
-This guide provides the fastest path to boot the local development environment. For detailed operational profiles, API routes, and machine learning components, consult the main [README.md](README.md).
+Last reviewed: 2026-05-24.
 
----
+This is the fastest path to a local development environment. For the full architecture and operational details, see [README.md](README.md), [docs/development.md](docs/development.md), and [docs/architecture.md](docs/architecture.md).
 
-## 1. Automated Bootstrap (Windows PowerShell)
+## Automated Bootstrap on Windows
 
-From the root directory of your cloned repository, execute the following commands in your PowerShell console:
+From the repository root in PowerShell:
 
 ```powershell
-# 1. Run the local diagnostics to check system readiness
 npm run doctor
-
-# 2. Re-create default env files, install packages, and provision local database
 npm run startup
-
-# 3. Start React and Django API servers concurrently
 npm run dev-all
 ```
 
-* `npm run startup` performs automatic provisioning: it configures standard `.env` and `.env.local` templates, launches Docker Compose containers, triggers `pip` backend installation inside `backend/venv`, and executes Django migrations.
+`npm run startup` creates missing env files, starts Docker Compose infrastructure, installs frontend and backend dependencies, creates `backend/venv`, and runs Django migrations.
 
-Once active, open your browser to access:
-* **Frontend Dashboard:** `http://localhost:5173`
-* **Django REST API:** `http://localhost:8000/api/v1/`
-* **Django Administrative Panel:** `http://localhost:8000/admin/`
+Open:
 
-- Frontend dashboard: `http://localhost:5173`
-- Backend REST API: `http://localhost:8000/api/v1/`
-- Django admin: `http://localhost:8000/admin/`
+| Service | URL |
+| :--- | :--- |
+| Frontend dashboard | `http://localhost:8080` |
+| Django REST API | `http://localhost:8000/api/v1/` |
+| Django admin in local startup mode | `http://localhost:8000/admin/` |
+| Prometheus | `http://localhost:9090` |
+| Grafana | `http://localhost:3001` |
+| Jaeger | `http://localhost:16686` |
 
-## 2. Dockerless Fallback Mode
+## Dockerless Fallback
 
-If Docker Desktop is not available on your workstation (or the Linux container engine daemon is blocked), you can run a lightweight, self-contained SQLite and in-memory cache/channel setup:
+If Docker Desktop is unavailable, run SQLite and in-memory cache/channel fallbacks:
 
 ```powershell
-# 1. Provision environment files with dockerless settings
 npm run startup:nodock
-
-# 2. Run the concurrent Vite and Django dev servers
 npm run dev-all
 ```
-*Note: Standalone fallback mode uses localizedSQLite persistence. It is suitable for rapid dashboard UI hacking but does not scale horizontally.*
 
-## Development Commands
+This mode is suitable for UI and API development. It is not a production-like ingestion setup and does not scale across processes.
 
-## 3. Background Aviation Ingestion
+## Start Background Ingestion
 
-`npm run dev-all` starts the active API endpoints but does not process background queues. To ingest live flights, OGN gliders, weather maps, and evaluate ML anomaly scoring, open two new terminal windows and launch the background tasks:
+`npm run dev-all` starts the frontend and Django API only. To ingest public feeds, persist records, run anomaly scoring, and broadcast WebSocket updates, start these in separate terminals:
 
 ```powershell
-# Terminal A: Launches the Celery ingestion and ML worker
 npm run backend:celery
-
-# Terminal B: Launches the Celery Beat task scheduler
 npm run backend:beat
 ```
 
----
+## Essential Commands
 
-## 4. Essential CLI Commands
-
-| CLI Script Command | Purpose |
+| Command | Purpose |
 | :--- | :--- |
-| `npm run doctor` | Performs diagnostic health checks on Node/npm/Python. |
-| `npm run dev-all` | Runs frontend and Django concurrently. |
-| `npm run reset-local-db` | Re-builds local SQLite and seeds mock flights (`npm run db:reset`). |
-| `npm run check` | Runs frontend Prettier formats, TypeScript compile, and builds. |
-| `npm run backend:check` | Runs Django system sanity checks. |
-| `npm run backend:test` | Executes the backend Django test suite (7/7 unit tests). |
-| `npm test` | Runs the end-to-end check and backend test suites together. |
-| `npm run docker:up` | Boots PostgreSQL, Redis, Prometheus, Grafana, and Jaeger. |
-| `npm run docker:down` | Wipes and stops local Docker containers. |
+| `npm run doctor` | Checks local Node.js, npm, Python, Docker Compose, and env-file readiness. |
+| `npm run dev` | Starts the frontend/TanStack Start dev server. |
+| `npm run backend:dev` | Starts Django through `scripts/backend-manage.mjs`. |
+| `npm run dev-all` | Starts frontend and Django concurrently. |
+| `npm run backend:celery` | Starts the Celery worker. |
+| `npm run backend:beat` | Starts Celery Beat. |
+| `npm run reset-local-db` | Rebuilds local SQLite state and seeds mock flights. |
+| `npm run check` | Runs frontend typecheck, lint, and production build. |
+| `npm run backend:check` | Runs Django system checks. |
+| `npm run backend:check-deploy` | Runs Django deployment checks. |
+| `npm run backend:test` | Runs backend Django tests. |
+| `npm test` | Runs frontend check and backend tests. |
+| `npm run docker:up` | Starts PostgreSQL, PgBouncer, Redis, Jaeger, Prometheus, and Grafana. |
+| `npm run docker:down` | Stops Docker Compose services. |
 
----
+## Common Local Issues
 
-## 5. Local Troubleshooting
-
-* **Upstream Rate Throttling:** If OpenSky Network public API limits are hit, register an account on the OpenSky Network portal and add your credentials (`OPENSKY_USERNAME` and `OPENSKY_PASSWORD`) to your local `backend/.env`.
-* **Port Bind Conflicts:** Ensure ports `5173` (Vite) and `8000` (Django/Daphne) are not allocated by other active processes prior to running `npm run dev-all`.
-* **Redis Connection Errors:** If the backend throws socket connection errors, check that Docker is running or ensure `ALLOW_IN_MEMORY_CHANNEL_LAYER=True` is enabled in `backend/.env` for standalone mode.
-
+- OpenSky public access can throttle. Add `OPENSKY_CLIENT_ID` and `OPENSKY_CLIENT_SECRET`, or legacy `OPENSKY_USERNAME` and `OPENSKY_PASSWORD`, to improve rate limits.
+- Check ports `8080` and `8000` before starting `npm run dev-all`.
+- If Redis is unavailable in local development, use `npm run startup:nodock` or set `ALLOW_IN_MEMORY_CHANNEL_LAYER=True` with `DJANGO_DEBUG=True`.

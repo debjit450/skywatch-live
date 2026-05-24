@@ -1,132 +1,114 @@
 # Support
 
-Need help with SkyWatch Live? This page describes the available support options.
+Last reviewed: 2026-05-24.
 
-## Getting Help
+This page explains where to get help with SkyWatch Live.
 
-### Documentation First
-Before reaching out, please check:
-- [README.md](README.md) - Main documentation
-- [QUICKSTART.md](QUICKSTART.md) - Fast setup guide
-- [docs/development.md](docs/development.md) - Development guide
-- [docs/production.md](docs/production.md) - Production deployment
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
+## Start with Documentation
 
-### GitHub Issues
+- [README.md](README.md) - Main project guide and API reference.
+- [QUICKSTART.md](QUICKSTART.md) - Fast local setup.
+- [docs/development.md](docs/development.md) - Local development modes.
+- [docs/architecture.md](docs/architecture.md) - Runtime architecture and data flow.
+- [docs/data-sources.md](docs/data-sources.md) - Public feed contracts and reliability behavior.
+- [docs/production.md](docs/production.md) - Production hardening.
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues.
+- [TESTING.md](TESTING.md) - Local and CI checks.
+
+## GitHub Issues
 
 Use GitHub Issues for:
-- **Bug reports** - Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md)
-- **Feature requests** - Use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md)
-- **Documentation issues** - Broken links, unclear instructions, etc.
 
-**Note**: Please search existing issues first to avoid duplicates.
+- Bug reports.
+- Feature requests.
+- Documentation problems.
+- Reproducible setup or deployment problems.
 
-### GitHub Discussions
+Search existing issues first to avoid duplicates.
 
-GitHub Discussions is available for:
-- General questions about the project
-- Architecture discussions
-- Best practices for deployment
-- Ideas for improvements
+## GitHub Discussions
 
-### Email Support
+Use GitHub Discussions for:
+
+- General questions.
+- Architecture discussion.
+- Deployment design.
+- Ideas that are not yet concrete bug reports or feature requests.
+
+## Direct Contact
 
 For direct support, contact:
 
-**📧 debjitdey450@gmail.com**
+`debjitdey450@gmail.com`
 
-Use email for:
-- Security issues (instead of public GitHub issues)
-- Deployment assistance
-- Custom integration questions
-- Commercial support inquiries
+Use direct email for:
 
-**Expected Response Time**: 1-3 business days
+- Deployment assistance.
+- Custom integration questions.
+- Commercial support inquiries.
+- Questions that include sensitive operational details.
 
-## Issue Report Guidelines
-
-### Good Issue Reports Include
-
-1. **Clear description** - What is the problem?
-2. **Steps to reproduce** - How can we recreate it?
-3. **Expected behavior** - What should happen?
-4. **Actual behavior** - What actually happens?
-5. **Environment details**:
-   - OS (Windows, Linux, macOS)
-   - Python version
-   - Node version
-   - Docker status (if applicable)
-   - Relevant config details (anonymized)
-
-### Example
-
-```
-**Description**: Dashboard freezes when filtering 10,000+ aircraft
-
-**Steps to reproduce**:
-1. Load dashboard
-2. Click "All Aircraft" filter
-3. Wait 5 seconds while data loads
-4. Select "Commercial Only" filter
-5. Dashboard becomes unresponsive
-
-**Expected**: Smooth filtering with no freezing
-**Actual**: 5-10 second freeze while re-rendering
-
-**Environment**:
-- OS: Windows 11
-- Node: 22.1.0
-- Python: 3.11.8
-- Docker: Desktop 4.30.0
-```
+Expected response time: 1-3 business days.
 
 ## Security Issues
 
-**Do not** open public GitHub issues for security vulnerabilities. Instead:
+Do not open public GitHub issues for vulnerabilities.
 
-1. Email: **debjitdey450@gmail.com** with subject line `[SECURITY]`
-2. Include details of the vulnerability
-3. Allow time for a fix before public disclosure
+Use one of these channels:
 
-See [SECURITY.md](SECURITY.md) for full vulnerability disclosure policy.
+1. Open a private GitHub security advisory.
+2. Email `security@skywatch-live.dev`.
+3. If the project security mailbox is unavailable, email `debjitdey450@gmail.com` with `[SECURITY]` in the subject.
 
-## Community
+See [SECURITY.md](SECURITY.md) for the full disclosure policy.
 
-- **Star the project** on GitHub to show support
-- **Share your deployment story** - We'd love to hear how you're using SkyWatch Live
-- **Contribute code** - See [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Improve documentation** - PRs are always welcome
+## Good Bug Reports Include
 
-## Commercial Support
+1. Clear problem description.
+2. Steps to reproduce.
+3. Expected behavior.
+4. Actual behavior.
+5. Environment details:
+   - OS.
+   - Browser.
+   - Node.js version.
+   - Python version.
+   - Docker status.
+   - Deployment mode.
+6. Relevant logs and redacted configuration.
 
-For commercial support, consulting, or custom development, contact:
+Example:
 
-📧 **debjitdey450@gmail.com**
+```text
+Description: Dashboard becomes unresponsive after enabling all overlays.
 
-We can discuss:
-- Deployment assistance
-- Custom integrations
-- Feature development
-- Performance tuning
-- Training and workshops
+Steps:
+1. Start npm run dev-all.
+2. Open http://localhost:8080.
+3. Enable flights, weather, restrictions, satellites, airports, and labels.
+4. Pan over a high-traffic region.
+
+Expected: Smooth interaction.
+Actual: Browser freezes for several seconds.
+
+Environment:
+- OS: Windows 11
+- Browser: Chrome 125
+- Node: 22.x
+- Python: 3.11.x
+- Docker: Desktop running
+```
 
 ## Response Expectations
 
-- **Bug reports**: Acknowledged within 24-48 hours
-- **Feature requests**: Reviewed within 1 week
-- **Pull requests**: Reviewed within 1-2 weeks
-- **Email support**: Response within 1-3 business days
+- Bug reports: acknowledged when maintainers have enough reproduction detail.
+- Feature requests: reviewed as time allows.
+- Pull requests: reviewed based on scope, risk, and maintainer availability.
+- Direct support email: response within 1-3 business days.
 
-## Frequently Asked Questions
+## Community
 
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for answers to common questions including:
-- Docker issues
-- Port conflicts
-- Database problems
-- Performance tuning
-- API authentication
-- And more
-
----
-
-**Thank you for using SkyWatch Live!** 🚀
+- Star the project on GitHub if it is useful.
+- Share deployment notes through issues or discussions.
+- Contribute documentation and reproducible fixes.
+- See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.

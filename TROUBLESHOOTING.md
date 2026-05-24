@@ -1,400 +1,286 @@
 # Troubleshooting
 
-Common issues and solutions for SkyWatch Live.
+Last reviewed: 2026-05-24.
 
-## Installation & Setup
+Common issues and fixes for local development and production deployments.
 
-### Docker Not Found
+## Installation and Setup
 
-**Problem**: `docker: command not found` or similar error
+### Docker is unavailable
 
-**Solutions**:
-1. Install Docker Desktop from https://www.docker.com/products/docker-desktop
-2. Ensure Docker daemon is running
-3. On Linux, verify user is in docker group: `sudo usermod -aG docker $USER`
-4. Use dockerless mode: `npm run startup:nodock`
+Symptoms: `docker: command not found`, Docker Desktop is stopped, or `docker compose` cannot reach the daemon.
 
-### Port Already in Use
+Fixes:
 
-**Problem**: `Address already in use` or port conflicts
+1. Start Docker Desktop and retry `npm run docker:up`.
+2. Install Docker Desktop if it is missing.
+3. Use dockerless mode for UI/API development:
 
-**Solutions**:
+   ```bash
+   npm run startup:nodock
+   npm run dev-all
+   ```
+
+### Port already in use
+
+Default local ports are frontend `8080` and Django `8000`.
+
 ```bash
-# Find what's using port (example: 5173)
-lsof -i :5173           # macOS/Linux
-netstat -ano | findstr :5173  # Windows
-
-# Kill the process or use different ports
-npm run dev -- --port 3000    # Use different frontend port
+lsof -i :8080                 # macOS/Linux
+netstat -ano | findstr :8080  # Windows
+npm run dev -- --port 3000    # temporary alternate frontend port
 ```
 
-### Python Virtual Environment Issues
+### Python virtual environment problems
 
-**Problem**: `ModuleNotFoundError` or package import errors
-
-**Solutions**:
 ```bash
-# Recreate venv
 cd backend
 rm -rf venv
 python -m venv venv
-source venv/bin/activate    # macOS/Linux
-venv\Scripts\activate       # Windows
+source venv/bin/activate      # macOS/Linux
+venv\Scripts\activate         # Windows
 pip install -r requirements.txt
 ```
 
-### Node Modules Issues
+### Node dependency problems
 
-**Problem**: `ENOENT: no such file or directory` or dependency errors
-
-**Solutions**:
 ```bash
-# Clear npm cache and reinstall
 npm cache clean --force
 rm -rf node_modules frontend/node_modules
-npm ci
 npm --prefix frontend ci
 ```
 
-## Database & Redis
+## Database and Redis
 
-### Database Connection Error
+### Database connection failed
 
-**Problem**: `could not connect to server`
+1. Confirm infrastructure is running:
 
-**Solutions**:
-
-1. **Check if services are running**:
    ```bash
    docker compose ps
    ```
 
-2. **Verify connection string**:
-   ```bash
-   # Check DATABASE_URL in backend/.env
-   echo $DATABASE_URL
-   ```
+2. Check `DATABASE_URL` in `backend/.env`.
+3. Reset local SQLite fallback when using dockerless mode:
 
-3. **Reset database**:
    ```bash
    npm run db:reset -- --yes
    npm run backend:migrate
    ```
 
-4. **Check PostgreSQL logs**:
+4. Check PostgreSQL logs:
+
    ```bash
-   docker compose logs db
+   docker compose logs postgres
    ```
 
-### Redis Connection Issues
+### Redis connection failed
 
-**Problem**: `Error: connect ECONNREFUSED 127.0.0.1:6379`
-
-**Solutions**:
 ```bash
-# Start Redis
 docker compose up -d redis
-
-# Test connection
 redis-cli ping
-
-# Check Redis logs
 docker compose logs redis
 ```
 
-### Database Locked (SQLite)
+For local development without Redis, use `DJANGO_DEBUG=True` and `ALLOW_IN_MEMORY_CHANNEL_LAYER=True`.
 
-**Problem**: `database is locked` when using SQLite
+### SQLite database locked
 
-**Solutions**:
-1. This is normal with concurrent access - use PostgreSQL for production
-2. Close all connections: Kill the dev server and try again
-3. Remove lock file: `rm backend/db.sqlite3-wal`
+SQLite is only a local fallback. Stop extra Django/Celery processes and retry. For concurrent ingestion, use PostgreSQL.
 
-## Frontend Issues
+## Frontend and Map
 
-### Dashboard Not Loading
+### Dashboard is blank
 
-**Problem**: Blank page or white screen
+1. Open browser DevTools and check console errors.
+2. Confirm the frontend is running at `http://localhost:8080`.
+3. Confirm the backend if configured: `http://localhost:8000/api/v1/flights/`.
+4. Check `VITE_SKYWATCH_API_BASE` and `VITE_SKYWATCH_WS_URL` in `frontend/.env.local`.
 
-**Solutions**:
-1. Check browser console for errors (F12 → Console)
-2. Verify API URL: `VITE_SKYWATCH_API_BASE` in `frontend/.env.local`
-3. Check if backend is running: `http://localhost:8000/api/v1/flights/`
-4. Clear browser cache: Ctrl+Shift+Delete (or Cmd+Shift+Delete)
+### Map does not render
 
-### Map Not Rendering
+The current map stack is MapLibre, react-map-gl, and deck.gl.
 
-**Problem**: Map shows gray/blank area
+1. Confirm the browser supports WebGL.
+2. Reload the tab after any `webglcontextlost` browser message.
+3. Try a current Chromium, Firefox, or Safari build.
+4. Check whether browser hardware acceleration is disabled.
 
-**Solutions**:
-1. Verify Leaflet CSS is loaded (check Network tab in DevTools)
-2. Check browser console for JavaScript errors
-3. Ensure geolocation permissions are granted
-4. Try different browser (Chrome, Firefox, Safari)
+### Dashboard is slow
 
-### Slow Performance / Lag
+1. Reduce visible aircraft with filters.
+2. Disable optional overlays such as satellites, weather, restrictions, airports, labels, and predicted paths.
+3. Check browser CPU/GPU usage.
+4. Verify WebSocket and REST traffic in DevTools.
+5. Test a production build:
 
-**Problem**: Dashboard is sluggish, slow to update
-
-**Solutions**:
-1. **Reduce aircraft count**: Use filters to show fewer flights
-2. **Check system resources**: Open Task Manager/Activity Monitor
-3. **Disable unnecessary overlays**: Turn off satellite/weather if not needed
-4. **Check network**: Verify WebSocket connection in DevTools → Network
-5. **Frontend optimization**:
    ```bash
-   npm run build     # Build for production
-   npm run preview   # Preview production build
+   npm run build
+   npm run preview
    ```
 
-## Backend Issues
+## Backend and Celery
 
-### Celery Workers Not Running
+### Background jobs are not running
 
-**Problem**: Background jobs not processing, anomaly detection not working
+`npm run dev-all` does not start Celery.
 
-**Solutions**:
 ```bash
-# Start Celery in a new terminal
 npm run backend:celery
-
-# Start Beat in another terminal
 npm run backend:beat
-
-# Check if tasks are queued
-redis-cli KEYS "celery-task-meta-*"
 ```
 
-### Django Migrations Failed
+### Migrations failed
 
-**Problem**: Migration errors or database schema mismatch
-
-**Solutions**:
 ```bash
-# Check migration status
+cd backend
 python manage.py showmigrations
-
-# Rollback to specific migration
-python manage.py migrate flights 0006
-
-# Create fresh migrations
-python manage.py makemigrations
+python manage.py makemigrations --check --dry-run
 python manage.py migrate
 ```
 
-### API Returns 500 Error
+### API returns HTTP 500
 
-**Problem**: Internal Server Error responses
+1. Check the terminal running `npm run backend:dev`.
+2. Check database and Redis connectivity.
+3. Confirm required env values are set.
+4. Run:
 
-**Solutions**:
-1. Check server logs: `docker compose logs api` or terminal where backend runs
-2. Check database connection
-3. Verify all required environment variables are set
-4. Run health check: `curl http://localhost:8000/health/ready`
-
-## Data & Ingestion
-
-### No Aircraft Showing on Map
-
-**Problem**: Map is empty, no flight data
-
-**Solutions**:
-1. **Check if Celery is running**: See above
-2. **Verify data sources are enabled**:
    ```bash
-   # Check .env settings
+   curl http://localhost:8000/health/ready
+   npm run backend:check
+   ```
+
+## Data and Ingestion
+
+### No aircraft on the map
+
+1. If using frontend-only mode, OpenSky may be throttling or returning sparse public coverage.
+2. If using full-stack mode, confirm Celery worker and Beat are running.
+3. Check source toggles in `backend/.env`:
+
+   ```bash
    grep ENABLED backend/.env
    ```
-3. **Check ingestion task logs**:
-   ```bash
-   docker compose logs api | grep "fetch_flight_states"
-   ```
-4. **Manual test**:
+
+4. Test OpenSky from the backend shell:
+
    ```bash
    npm run backend:shell
    >>> from flights.services.opensky import fetch_all_states
-   >>> states = fetch_all_states()
-   >>> len(states)  # Should show number of aircraft
+   >>> payload = fetch_all_states()
    ```
 
-### Old Data in Dashboard
+### Data is stale
 
-**Problem**: Map shows outdated flight information
+1. Restart Celery worker and Beat.
+2. Clear local Redis only if you are comfortable dropping cache state:
 
-**Solutions**:
-1. **Clear cache**:
    ```bash
    redis-cli FLUSHALL
    ```
-2. **Restart Celery workers**: Kill and restart
-3. **Check cache settings**: Verify `REDIS_URL` in backend/.env
 
-### API Rate Limiting
+3. Check `/health/metrics` and source health endpoints.
 
-**Problem**: Getting 429 Too Many Requests
+### Public API rate limits
 
-**Solutions**:
-1. **OpenSky Network**: Register for API credentials
-   ```bash
-   # Set in backend/.env
-   OPENSKY_CLIENT_ID=your_id
-   OPENSKY_CLIENT_SECRET=your_secret
-   ```
-2. **Space requests**: Celery job runs every 15 seconds (configurable)
-3. **Use supplemental sources**: Enable ADS-B One, Airplanes.live, etc.
+OpenSky and public aggregators can throttle. Add OpenSky credentials when available:
 
-## WebSocket & Real-Time
-
-### No Real-Time Updates
-
-**Problem**: Dashboard shows static data, doesn't update in real-time
-
-**Solutions**:
-1. **Check WebSocket connection**:
-   - DevTools → Network → WS (WebSocket tab)
-   - Should show connection to `/ws/flights/`
-2. **Verify Redis Channels**:
-   ```bash
-   redis-cli SUBSCRIBE celery-task-meta-*
-   ```
-3. **Check if Celery is running and sending updates**
-4. **Browser console**: Look for connection errors
-
-### WebSocket Connection Drops
-
-**Problem**: Frequent disconnects or connection timeouts
-
-**Solutions**:
-1. **Increase timeout values** in `backend/skywatch/settings.py`:
-   ```python
-   CHANNEL_LAYERS = {
-       'default': {
-           'TIMEOUT': 60,  # Increase from default
-       }
-   }
-   ```
-2. **Check network stability**: Test with ping/latency tools
-3. **Verify Redis is stable**: Check Redis logs
-4. **Restart services**: Sometimes helps with stale connections
-
-## Performance Tuning
-
-### High CPU Usage
-
-**Problem**: Backend CPU constantly at 100%
-
-**Solutions**:
-1. **Reduce ingestion frequency**: Adjust in `backend/skywatch/celery.py`
-2. **Disable unused sources**: Set `*_ENABLED=False` in `.env`
-3. **Scale workers**: Run multiple Celery workers
-4. **Database indexing**: Verify indexes are created
-
-### High Memory Usage
-
-**Problem**: System running out of RAM
-
-**Solutions**:
-1. **Reduce flight history retention**: Configure in settings
-2. **Enable data cleanup**: `cleanup-old-data-hourly` task
-3. **Optimize queries**: Use Django debug toolbar in development
-4. **Scale vertically**: Add more RAM or split services
-
-### Slow Queries
-
-**Problem**: API endpoints respond slowly
-
-**Solutions**:
-```bash
-# Enable query logging
-DJANGO_DEBUG=True
-# Check Django Debug Toolbar (development only)
-
-# Profile with Django
-python manage.py shell_plus --print-sql
-
-# Check PostgreSQL slow queries
-docker compose logs db | grep "duration"
+```env
+OPENSKY_CLIENT_ID=your-client-id
+OPENSKY_CLIENT_SECRET=your-client-secret
 ```
 
-## Docker Issues
+or legacy credentials:
 
-### Container Won't Start
+```env
+OPENSKY_USERNAME=your-username
+OPENSKY_PASSWORD=your-password
+```
 
-**Problem**: Docker container exits immediately
+## WebSocket and Real-Time Updates
 
-**Solutions**:
+### No real-time updates
+
+1. In DevTools, check the WebSocket connection to `/ws/flights/`.
+2. Confirm `REDIS_URL` is reachable in full-stack mode.
+3. Confirm Celery is ingesting and publishing snapshots.
+4. If `VITE_SKYWATCH_API_BASE` points to a backend, ensure `VITE_SKYWATCH_WS_URL` is correct or derivable.
+
+### WebSocket drops in production
+
+1. Confirm the reverse proxy forwards WebSocket upgrade headers.
+2. Confirm all ASGI instances share the same Redis Channels layer.
+3. Check Redis health and network latency.
+4. Check load balancer idle timeout settings.
+
+## Performance
+
+### Backend CPU is high
+
+- Disable unused sources with `*_ENABLED=False`.
+- Run fewer Celery worker processes locally.
+- Use PostgreSQL instead of SQLite for ingestion.
+- Profile slow endpoints before adding indexes.
+
+### Memory is high
+
+- Reduce retention with `FLIGHT_STATE_RETENTION_DAYS` and `FLIGHT_POSITION_RETENTION_DAYS`.
+- Confirm `cleanup-old-data-hourly` is running.
+- Run separate processes for ASGI, worker, and Beat.
+
+### Slow database queries
+
+Use PostgreSQL logs and Django query inspection. `django-extensions` is not currently installed, so `shell_plus` is not available by default.
+
 ```bash
-# Check logs
-docker compose logs service_name
+cd backend
+python manage.py shell
+docker compose logs postgres
+```
 
-# Verify image exists
-docker images
+## Docker Infrastructure
 
-# Rebuild image
-docker compose build --no-cache service_name
+### Container exits immediately
 
-# Try full restart
+```bash
+docker compose logs <service-name>
+docker compose build --no-cache <service-name>
 docker compose down
 docker compose up --build
 ```
 
-### Out of Disk Space
+### Disk space is exhausted
 
-**Problem**: Docker running out of storage
-
-**Solutions**:
 ```bash
-# Clean up unused images/containers
-docker system prune -a
-
-# Check disk usage
 docker system df
-
-# Remove specific container data
-docker compose down -v  # Warning: deletes volumes
+docker system prune -a
 ```
 
-## Production Issues
+Use `docker compose down -v` only when you intend to delete local volumes.
 
-### SSL/TLS Certificate Problems
+## Production
 
-**Problem**: `SSL: CERTIFICATE_VERIFY_FAILED`
+### TLS or secure-cookie problems
 
-**Solutions**:
-1. Verify certificate is valid and not expired
-2. Check certificate chain is complete
-3. Ensure reverse proxy is configured correctly
-4. Test: `curl -I https://your-domain.com`
+1. Verify the certificate chain.
+2. Confirm proxy headers reach Django.
+3. Check `DJANGO_SECURE_SSL_REDIRECT`, `DJANGO_SESSION_COOKIE_SECURE`, and `DJANGO_CSRF_COOKIE_SECURE`.
+4. Test with:
 
-### Environment Variable Not Loading
+   ```bash
+   curl -I https://your-domain.example
+   ```
 
-**Problem**: Configuration settings ignored
+### Environment values are ignored
 
-**Solutions**:
 ```bash
-# Verify .env file exists and is readable
 ls -la backend/.env
-
-# Check if variables are exported
 env | grep DJANGO
-
-# Reload environment
-source backend/.env  # Unix/Linux/macOS
 ```
 
-## Still Having Issues?
+Remember that production supervisors, containers, and platform services often need env values configured outside local `.env` files.
 
-If you can't find your problem here:
+## Still Stuck
 
-1. **Search existing GitHub issues**: https://github.com/debjit450/skywatch-live/issues
-2. **Check documentation**: [README.md](README.md), [docs/](docs/)
-3. **Contact support**: debjitdey450@gmail.com
-   - Include error messages
-   - Describe steps to reproduce
-   - Provide system information (OS, versions)
-   - Relevant logs or screenshots
-
----
-
-**Last Updated**: May 2024
+Open a GitHub issue or see [SUPPORT.md](SUPPORT.md). Include exact commands, OS, Node/Python versions, Docker status, redacted env values, and logs.

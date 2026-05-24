@@ -1,5 +1,5 @@
 const targets = [
-  process.env.SKYWATCH_FRONTEND_URL || "http://localhost:5173",
+  process.env.SKYWATCH_FRONTEND_URL || "http://localhost:8080",
   process.env.SKYWATCH_BACKEND_URL || "http://localhost:8000/health/live",
   process.env.SKYWATCH_API_URL || "http://localhost:8000/api/v1/flights/",
 ];

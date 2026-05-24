@@ -40,8 +40,8 @@ function Write-LocalBackendEnv {
         "DJANGO_SECRET_KEY=local-dev-only-change-before-production",
         "DJANGO_DEBUG=True",
         "ALLOWED_HOSTS=localhost,127.0.0.1,[::1]",
-        "CSRF_TRUSTED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
-        "CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
+        "CSRF_TRUSTED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:3000,http://127.0.0.1:3000",
+        "CORS_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:3000,http://127.0.0.1:3000",
         "ALLOW_IN_MEMORY_CHANNEL_LAYER=True",
         "SKYWATCH_DEPLOYMENT_PROFILE=local",
         "SKYWATCH_DEMO_MODE=False",
@@ -171,5 +171,5 @@ Write-Host "Or start services separately:" -ForegroundColor $info
 Write-Host "  npm run dev"
 Write-Host "  npm run backend:dev"
 Write-Host ""
-Write-Host "Frontend: http://localhost:5173" -ForegroundColor $success
+Write-Host "Frontend: http://localhost:8080" -ForegroundColor $success
 Write-Host "Backend API: http://localhost:8000/api/v1/" -ForegroundColor $success

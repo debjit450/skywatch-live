@@ -5,6 +5,25 @@ All notable changes to SkyWatch Live will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Refreshed README, quick start, deployment, testing, troubleshooting, support, security, data-source, production, development, and architecture docs from the current repository state.
+- Updated architecture diagrams to reflect MapLibre/deck.gl, TanStack Start server routes, Django REST/Channels, Celery, Redis, PostgreSQL, Prometheus, Grafana, and Jaeger.
+- Added third-party licensing and data-source notice coverage in `THIRD_PARTY_NOTICES.md`.
+- Aligned local documentation and setup-facing scripts with the configured frontend dev port `8080`.
+- Replaced stale map-stack references with the current MapLibre/deck.gl implementation.
+
+### Fixed
+- Corrected outdated Docker Compose language. Compose provisions infrastructure services, not backend/frontend application services.
+- Corrected source merge documentation to match the code path: normalized ICAO24 records are deduplicated by freshest `last_contact`, with provenance and conflict metadata retained.
+- Removed stale last-updated markers and corrupted symbol text from support and troubleshooting docs.
+
+### Planned
+- User authentication and role-based access control hardening for operator workflows.
+- Saved searches and richer alert management.
+- Additional automated frontend test coverage after selecting a test runner.
+
 ## [1.0.0] - 2024-05-24
 
 ### Added
@@ -52,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Frontend Features
 - React with TanStack Start SSR
-- Leaflet-based interactive map
+- MapLibre/deck.gl interactive map
 - Real-time data visualization
 - Aircraft filtering and search
 - Detail panels for flight information
@@ -79,32 +98,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Contributing guidelines
 - Security policy
 - Contributors guide
-
-## [Unreleased]
-
-### Planned Features
-- User authentication and role-based access control
-- Saved flight searches and alerts
-- Custom map layers
-- Flight comparison tools
-- Advanced analytics dashboard
-- Mobile app support
-- Multi-language support
-- Performance optimizations for 100k+ aircraft
-
-### Performance Improvements
-- Database query optimization
-- WebSocket message batching
-- Frontend rendering optimization
-- ML model inference acceleration
-
-### Known Limitations
-- Public API rate limits may affect coverage
-- Flight data sourced from public feeds (no guarantee of continuous coverage)
-- Some regions may have sparse receiver networks
-- Historical data retention depends on deployment configuration
-
----
 
 ## Versioning Notes
 
