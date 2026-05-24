@@ -14,6 +14,7 @@ import {
   MARKER_DECK_ICONS,
   MARKER_ICON_HEADING_OFFSET,
   markerIconForAircraftClass,
+  type SkywatchMarkerIconName,
 } from "./markerIcons";
 import type {
   DeckAirportPoint,
@@ -26,6 +27,7 @@ import type {
   DeckWeatherPoint,
   LayerBuildInput,
   LngLatPosition,
+  PreparedSkywatchDeckData,
   RestrictionFeature,
   RestrictionFeatureCollection,
   SelectedTrackSegment,
@@ -35,8 +37,19 @@ import type {
 const EARTH_RADIUS_M = 6_371_000;
 const MAX_PREDICTION_PATHS = 300;
 const MAX_AIRPORT_LABELS = 500;
+const FLIGHT_POINT_CACHE_LIMIT = 30_000;
 
 const ROUTE_POINT_COUNT = 96;
+const flightPointCache = new Map<string, DeckFlightPoint>();
+
+function limitedCacheSet<T>(cache: Map<string, T>, key: string, value: T): T {
+  if (cache.size >= FLIGHT_POINT_CACHE_LIMIT) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey) cache.delete(firstKey);
+  }
+  cache.set(key, value);
+  return value;
+}
 
 function isFiniteCoordinate(lat: number | null | undefined, lon: number | null | undefined) {
   return (
@@ -238,6 +251,30 @@ function flightPriority(
 // Position transitions removed: they caused the visual icon and pick target
 // to animate independently, making clicks land on the wrong aircraft.
 
+function flightPointCacheKey(
+  flight: Flight,
+  anomaly: AnomalousFlight | null,
+  selected: boolean,
+): string {
+  return [
+    flight.icao24,
+    flight.time_position ?? "",
+    flight.last_contact,
+    flight.longitude ?? "",
+    flight.latitude ?? "",
+    flight.baro_altitude ?? "",
+    flight.geo_altitude ?? "",
+    flight.velocity ?? "",
+    flight.true_track ?? "",
+    flight.on_ground ? 1 : 0,
+    flight.category ?? 0,
+    flight.data_source ?? "",
+    flight.prediction_confidence ?? "",
+    selected ? 1 : 0,
+    anomaly?.anomalies.map((item) => item.type).join(",") ?? "",
+  ].join("|");
+}
+
 export function buildFlightPoints(
   flights: Flight[],
   anomalyMap: Map<string, AnomalousFlight>,
@@ -245,11 +282,15 @@ export function buildFlightPoints(
 ): DeckFlightPoint[] {
   return flights
     .map((flight): DeckFlightPoint | null => {
+      const selected = selectedId === flight.icao24;
+      const anomaly = anomalyMap.get(flight.icao24) ?? null;
+      const cacheKey = flightPointCacheKey(flight, anomaly, selected);
+      const cached = flightPointCache.get(cacheKey);
+      if (cached) return cached;
+
       const predicted = predictFlightState(flight);
       if (!isFiniteCoordinate(predicted.latitude, predicted.longitude)) return null;
 
-      const selected = selectedId === flight.icao24;
-      const anomaly = anomalyMap.get(flight.icao24) ?? null;
       const aircraftClass = classifyFlight(flight);
       const classInfo = getClassInfo(aircraftClass);
       const fillColor = aircraftColor(flight, anomaly, selected, classInfo.color);
@@ -257,7 +298,7 @@ export function buildFlightPoints(
         ? ([flight.longitude as number, flight.latitude as number] satisfies LngLatPosition)
         : null;
 
-      return {
+      return limitedCacheSet(flightPointCache, cacheKey, {
         objectType: "flight",
         id: flight.icao24,
         position: [predicted.longitude as number, predicted.latitude as number],
@@ -279,7 +320,7 @@ export function buildFlightPoints(
         priority: flightPriority(flight, anomaly, selected),
         predicted: predicted.isPredicted,
         confidence: predicted.confidence,
-      };
+      });
     })
     .filter((point): point is DeckFlightPoint => point !== null)
     .sort((a, b) => a.priority - b.priority);
@@ -355,9 +396,34 @@ function predictionPathForFlight(flight: Flight): DeckPredictionPath | null {
   };
 }
 
-export function buildPredictionPaths(flights: Flight[]): DeckPredictionPath[] {
-  return flights
-    .slice(0, MAX_PREDICTION_PATHS)
+function prioritizedPredictionFlights(
+  flights: Flight[],
+  anomalyMap: Map<string, AnomalousFlight>,
+  selectedId: string | null,
+): Flight[] {
+  return [...flights]
+    .sort((a, b) => {
+      const aScore =
+        (a.icao24 === selectedId ? 10_000 : 0) +
+        (anomalyMap.has(a.icao24) ? 5_000 : 0) +
+        (a.predicted_path?.length ? 1_000 : 0) +
+        (a.velocity ?? 0);
+      const bScore =
+        (b.icao24 === selectedId ? 10_000 : 0) +
+        (anomalyMap.has(b.icao24) ? 5_000 : 0) +
+        (b.predicted_path?.length ? 1_000 : 0) +
+        (b.velocity ?? 0);
+      return bScore - aScore;
+    })
+    .slice(0, MAX_PREDICTION_PATHS);
+}
+
+export function buildPredictionPaths(
+  flights: Flight[],
+  anomalyMap: Map<string, AnomalousFlight>,
+  selectedId: string | null,
+): DeckPredictionPath[] {
+  return prioritizedPredictionFlights(flights, anomalyMap, selectedId)
     .map(predictionPathForFlight)
     .filter((path): path is DeckPredictionPath => path !== null);
 }
@@ -518,6 +584,14 @@ export function buildWeatherPoints(
       const code = airportCodeCandidates(airport).find((candidate) => weather[candidate]);
       if (!code) return null;
       const metar = weather[code];
+
+      let iconName: SkywatchMarkerIconName = "weatherUnknown";
+      const cat = (metar.flight_category || "").toUpperCase();
+      if (cat === "VFR") iconName = "weatherVfr";
+      else if (cat === "MVFR") iconName = "weatherMvfr";
+      else if (cat === "IFR") iconName = "weatherIfr";
+      else if (cat === "LIFR") iconName = "weatherLifr";
+
       return {
         objectType: "weather",
         id: `weather-${code}`,
@@ -526,6 +600,7 @@ export function buildWeatherPoints(
         metar,
         label: metar.flight_category || "WX",
         fillColor: weatherColor(metar.flight_category),
+        iconName,
       };
     })
     .filter((point): point is DeckWeatherPoint => point !== null);
@@ -576,12 +651,14 @@ function restrictionCollection(features: RestrictionFeature[]): RestrictionFeatu
   };
 }
 
-export function createSkywatchDeckLayers(input: LayerBuildInput): Layer[] {
+export function prepareSkywatchDeckData(input: LayerBuildInput): PreparedSkywatchDeckData {
   const flightPoints = input.visibility.flights
     ? buildFlightPoints(input.flights, input.anomalyMap, input.selectedId)
     : [];
   const headingPaths = input.visibility.flights ? buildHeadingPaths(flightPoints) : [];
-  const predictionPaths = input.visibility.predictions ? buildPredictionPaths(input.flights) : [];
+  const predictionPaths = input.visibility.predictions
+    ? buildPredictionPaths(input.flights, input.anomalyMap, input.selectedId)
+    : [];
   const routePaths = buildRoutePaths(input);
   const trackPaths =
     input.visibility.tracks && routePaths.length === 0
@@ -604,13 +681,52 @@ export function createSkywatchDeckLayers(input: LayerBuildInput): Layer[] {
     (point) => point.selected || point.anomaly || isHelicopter(point.flight),
   );
 
+  return {
+    visibility: input.visibility,
+    hasValidRoute: input.hasValidRoute,
+    selectedId: input.selectedId,
+    routeAirports: input.routeAirports,
+    flightPoints,
+    headingPaths,
+    predictionPaths,
+    routePaths,
+    trackPaths,
+    airportPoints,
+    weatherPoints,
+    satellitePoints,
+    highlightedFlightPoints,
+    airportLabelPoints,
+    flightLabelPoints,
+    restrictions: input.restrictions,
+  };
+}
+
+export function createSkywatchDeckLayers(input: PreparedSkywatchDeckData): Layer[] {
+  const {
+    visibility,
+    hasValidRoute,
+    selectedId,
+    routeAirports,
+    flightPoints,
+    headingPaths,
+    predictionPaths,
+    routePaths,
+    trackPaths,
+    airportPoints,
+    weatherPoints,
+    satellitePoints,
+    highlightedFlightPoints,
+    airportLabelPoints,
+    flightLabelPoints,
+    restrictions,
+  } = input;
   const layers: Layer[] = [];
 
-  if (input.visibility.restrictions && input.restrictions.length > 0) {
+  if (visibility.restrictions && restrictions.length > 0) {
     layers.push(
       new GeoJsonLayer<Record<string, unknown>>({
         id: SKYWATCH_LAYER_IDS.restrictions,
-        data: restrictionCollection(input.restrictions),
+        data: restrictionCollection(restrictions),
         pickable: true,
         stroked: true,
         filled: true,
@@ -722,8 +838,8 @@ export function createSkywatchDeckLayers(input: LayerBuildInput): Layer[] {
         getSize: (item) => item.iconSizePixels,
         getColor: (item) => item.fillColor,
         updateTriggers: {
-          getColor: [input.routeAirports.length],
-          getSize: [input.routeAirports.length],
+          getColor: [routeAirports.length],
+          getSize: [routeAirports.length],
         },
       }),
     );
@@ -793,9 +909,9 @@ export function createSkywatchDeckLayers(input: LayerBuildInput): Layer[] {
         getColor: (item) => item.fillColor,
         getAngle: (item) => -(item.heading ?? 0) + MARKER_ICON_HEADING_OFFSET[item.iconName],
         updateTriggers: {
-          getColor: [input.selectedId],
-          getSize: [input.selectedId],
-          getIcon: [input.selectedId],
+          getColor: [selectedId],
+          getSize: [selectedId],
+          getIcon: [selectedId],
         },
       }),
     );
@@ -803,26 +919,23 @@ export function createSkywatchDeckLayers(input: LayerBuildInput): Layer[] {
 
   if (weatherPoints.length > 0) {
     layers.push(
-      new ScatterplotLayer<DeckWeatherPoint>({
+      new IconLayer<DeckWeatherPoint>({
         id: SKYWATCH_LAYER_IDS.weather,
         data: weatherPoints,
         pickable: true,
         autoHighlight: true,
-        radiusUnits: "pixels",
-        lineWidthUnits: "pixels",
-        stroked: true,
-        filled: true,
+        billboard: true,
+        sizeUnits: "pixels",
         getPosition: (item) => item.position,
-        getRadius: 8,
-        getFillColor: (item) => item.fillColor,
-        getLineColor: MAP_COLORS.white,
-        getLineWidth: 1.5,
+        getIcon: (item) => MARKER_DECK_ICONS[item.iconName || "weatherUnknown"],
+        getSize: 28,
+        getColor: [255, 255, 255, 255],
       }),
     );
   }
 
-  const showAirportLabels = input.visibility.labels || input.hasValidRoute;
-  const activeAirportLabelPoints = input.visibility.labels
+  const showAirportLabels = visibility.labels || hasValidRoute;
+  const activeAirportLabelPoints = visibility.labels
     ? airportLabelPoints
     : airportLabelPoints.filter((point) => point.routeNode);
 
@@ -846,7 +959,7 @@ export function createSkywatchDeckLayers(input: LayerBuildInput): Layer[] {
     );
   }
 
-  if (input.visibility.labels && flightLabelPoints.length > 0) {
+  if (visibility.labels && flightLabelPoints.length > 0) {
     layers.push(
       new TextLayer<DeckFlightPoint>({
         id: SKYWATCH_LAYER_IDS.flightLabels,

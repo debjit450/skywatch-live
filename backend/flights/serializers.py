@@ -1,7 +1,18 @@
 """DRF Serializers for the SkyWatch API."""
 
 from rest_framework import serializers
-from .models import Aircraft, FlightState, FlightRoute, FlightPosition, AnomalyEvent, SystemMetrics, AlertRule
+from .models import (
+    Aircraft,
+    FlightState,
+    FlightRoute,
+    FlightPosition,
+    AnomalyEvent,
+    SystemMetrics,
+    AlertRule,
+    IngestionAudit,
+    IngestionSourceHealth,
+    MLModelVersion,
+)
 
 
 class FlightStateSerializer(serializers.ModelSerializer):
@@ -71,6 +82,9 @@ class FlightStateLiveSerializer(serializers.Serializer):
     category = serializers.IntegerField(required=False, default=0)
     ml_anomaly_score = serializers.FloatField(allow_null=True, required=False)
     data_source = serializers.CharField(required=False, default="")
+    source_confidence = serializers.FloatField(required=False, default=1.0)
+    source_provenance = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    source_conflicts = serializers.ListField(child=serializers.DictField(), required=False, default=list)
     predicted_path = serializers.ListField(child=serializers.DictField(), required=False, default=list)
     prediction_confidence = serializers.FloatField(required=False, default=0.0)
 
@@ -110,8 +124,11 @@ class AnomalyEventSerializer(serializers.ModelSerializer):
             "anomaly_type",
             "severity",
             "confidence_score",
+            "detector_type",
             "ml_score",
             "details",
+            "evidence",
+            "source_quality",
             "explanation",
             "isolation_score",
             "lstm_score",
@@ -153,6 +170,7 @@ class AnomalyEventCompactSerializer(serializers.ModelSerializer):
             "severity",
             "confidence_score",
             "ml_score",
+            "detector_type",
             "source",
             "detected_at",
             "is_active",
@@ -233,3 +251,63 @@ class AnalyticsSerializer(serializers.Serializer):
     anomaly_by_type = serializers.DictField()
     anomaly_by_severity = serializers.DictField()
     timeline = serializers.ListField()
+
+
+class IngestionSourceHealthSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IngestionSourceHealth
+        fields = [
+            "source",
+            "status",
+            "enabled",
+            "confidence_score",
+            "last_success_at",
+            "last_error_at",
+            "last_error",
+            "consecutive_failures",
+            "rate_limited_until",
+            "circuit_open_until",
+            "latency_ms",
+            "aircraft_count",
+            "normalized_count",
+            "rejected_count",
+            "updated_at",
+        ]
+
+
+class IngestionAuditSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IngestionAudit
+        fields = [
+            "id",
+            "source",
+            "started_at",
+            "finished_at",
+            "duration_ms",
+            "status",
+            "upstream_status",
+            "aircraft_count",
+            "normalized_count",
+            "rejected_count",
+            "error",
+            "metadata",
+        ]
+
+
+class MLModelVersionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MLModelVersion
+        fields = [
+            "id",
+            "model_name",
+            "version",
+            "detector_type",
+            "training_sample_count",
+            "trained_at",
+            "metrics",
+            "thresholds",
+            "drift_indicators",
+            "artifact_path",
+            "is_active",
+            "created_at",
+        ]

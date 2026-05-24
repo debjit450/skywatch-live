@@ -198,7 +198,7 @@ const MILITARY_CALLSIGN_PREFIXES = new Set([
   "SVF", // Swedish Air Force
   "HUF", // Hungarian Air Force
   "PLF", // Polish Air Force
-  "CFG", // Canadian Forces
+  "CFC", // Canadian Forces
   "ASY", // Australian Air Force
   "NZM", // NZ Air Force
   "IAF", // Israeli Air Force
@@ -235,11 +235,8 @@ const CARGO_CALLSIGN_PREFIXES = new Set([
   "SQC", // Singapore Airlines Cargo
   "CAO", // Air China Cargo
   "SHQ", // Shanghai Airlines Cargo
-  "KAL", // Korean Air (partial cargo ops)
   "NCA", // Nippon Cargo Airlines
   "TPA", // TAMPA Cargo
-  "MAS", // MASkargo
-  "EVA", // EVA Air Cargo
 ]);
 
 // ─── Business jet ICAO24 hex prefixes (sampling) ─────────────────────────────
@@ -264,15 +261,70 @@ const BUSINESS_JET_CALLSIGN_HINTS = new Set([
  * 2. Callsign prefix matching (military, cargo)
  * 3. Category + behavioral heuristics (business jet vs GA)
  */
-export function classifyFlight(flight: Flight): AircraftClass {
+const CLASSIFICATION_CACHE_LIMIT = 20_000;
+const classificationCache = new Map<string, AircraftClass>();
+
+function classificationSignature(flight: Flight): string {
+  return [
+    flight.icao24,
+    flight.category ?? 0,
+    flight.callsign?.trim().toUpperCase() ?? "",
+    flight.squawk ?? "",
+    Math.round(flight.baro_altitude ?? flight.geo_altitude ?? 0),
+    Math.round(flight.velocity ?? 0),
+  ].join("|");
+}
+
+function rememberClassification(key: string, value: AircraftClass): AircraftClass {
+  if (classificationCache.size >= CLASSIFICATION_CACHE_LIMIT) {
+    const firstKey = classificationCache.keys().next().value;
+    if (firstKey) classificationCache.delete(firstKey);
+  }
+  classificationCache.set(key, value);
+  return value;
+}
+
+function classifyFlightUncached(flight: Flight): AircraftClass {
   const category = flight.category ?? 0;
   const callsign = flight.callsign?.trim().toUpperCase() ?? "";
   const prefix3 = callsign.slice(0, 3);
   const prefix4 = callsign.slice(0, 4);
   const prefix5 = callsign.slice(0, 5);
 
-  // ── Category-first classification ──
+  // ── 1. High-priority definitive Call signs & Squawks (Military & Cargo) ──
+  if (
+    MILITARY_CALLSIGN_PREFIXES.has(prefix3) ||
+    MILITARY_CALLSIGN_PREFIXES.has(prefix4) ||
+    MILITARY_CALLSIGN_PREFIXES.has(prefix5) ||
+    flight.squawk === "7777"
+  ) {
+    return "military";
+  }
 
+  if (CARGO_CALLSIGN_PREFIXES.has(prefix3)) {
+    return "cargo";
+  }
+
+  // ── 2. Precise aircraft type code classification (if available) ──
+  const typeCode = (flight.aircraft_type || "").trim().toUpperCase();
+  if (typeCode) {
+    // Commercial airliners (Airbus A220-A380, Boeing 707-787, Embraer E-Jets, CRJs, ATRs)
+    if (
+      /^(A22|A3[0-8]|B7[0-8]|E17|E19|CRJ|DH8|ATR|BCS|A20N|A21N|A32[0-9]|B73[0-9]|B3[789]M)/.test(
+        typeCode,
+      ) ||
+      typeCode.includes("BOEING") ||
+      typeCode.includes("AIRBUS")
+    ) {
+      return "commercial";
+    }
+    // Business jets (Gulfstream, Challenger, Citation, Falcon, Learjet, Phenom, Hondajet)
+    if (/^(GLF|CL3|CL6|C25|C51|C52|C56|C68|C75|FA5|FA7|FA8|FA9|LJ|E50|E55|HA4)/.test(typeCode)) {
+      return "business_jet";
+    }
+  }
+
+  // ── 3. Category-first classification ──
   // Rotorcraft
   if (category === 8) return "helicopter";
 
@@ -352,12 +404,10 @@ export function classifyFlight(flight: Flight): AircraftClass {
 
   // No emitter / Unknown categories
   if (category === 0 || category === 1) {
-    // Try to infer from callsign and speed
+    // Try to infer from callsign
     if (callsign && /^[A-Z]{3}\d/.test(callsign)) {
-      // Airline-format callsign
-      const vel = flight.velocity ?? 0;
-      if (vel > 180) return "commercial";
-      if (vel > 100) return "business_jet";
+      // Airline-format callsign is almost certainly commercial
+      return "commercial";
     }
     // N-number or other reg-style callsign
     if (callsign && /^N\d/.test(callsign)) return "general_aviation";
@@ -369,6 +419,13 @@ export function classifyFlight(flight: Flight): AircraftClass {
   }
 
   return "unknown";
+}
+
+export function classifyFlight(flight: Flight): AircraftClass {
+  const key = classificationSignature(flight);
+  const cached = classificationCache.get(key);
+  if (cached) return cached;
+  return rememberClassification(key, classifyFlightUncached(flight));
 }
 
 /**

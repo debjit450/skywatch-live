@@ -189,3 +189,56 @@ def fetch_all_states(bounds=None):
     except Exception as exc:
         logger.error("OpenSky API error: %s", exc)
         raise
+
+
+FLIGHTS_AIRCRAFT_URL = "https://opensky-network.org/api/flights/aircraft"
+
+
+def fetch_aircraft_flights(icao24, begin, end):
+    """
+    Fetch historical flights for a specific aircraft from OpenSky over a time window.
+    Used to resolve origin and destination airports.
+    
+    Returns:
+        list of dicts containing flight details (estDepartureAirport, estArrivalAirport, etc.)
+    """
+    icao24 = str(icao24).strip().lower()
+    if not _valid_icao24(icao24):
+        return []
+
+    headers = {"Accept": "application/json"}
+    auth = None
+
+    token = _get_access_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        auth = _get_basic_auth()
+
+    params = {
+        "icao24": icao24,
+        "begin": int(begin),
+        "end": int(end),
+    }
+
+    try:
+        resp = requests.get(
+            FLIGHTS_AIRCRAFT_URL,
+            headers=headers,
+            auth=auth,
+            params=params,
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.json() or []
+        elif resp.status_code == 404:
+            return []
+        elif resp.status_code == 429:
+            logger.warning("OpenSky API rate limited (429) during flights lookup for %s", icao24)
+            return []
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.debug("Failed to fetch historical flights for %s: %s", icao24, exc)
+    
+    return []
+

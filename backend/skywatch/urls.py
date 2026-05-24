@@ -84,7 +84,8 @@ def health_ready(_request):
 
 
 def health_metrics(_request):
-    from flights.models import Aircraft, AnomalyEvent
+    from flights.metrics import celery_queue_depth
+    from flights.models import Aircraft, AnomalyEvent, IngestionSourceHealth
     from flights.services.cache import get_cache_stats, _get_redis
 
     now = timezone.now()
@@ -96,9 +97,25 @@ def health_metrics(_request):
             ws_connections = int(redis.get("metrics:ws:connections") or 0)
         except Exception:
             ws_connections = 0
+        try:
+            depth = int(redis.llen("celery") or 0)
+            celery_queue_depth.set(depth)
+        except Exception:
+            depth = 0
+    else:
+        depth = 0
 
     total_anomalies = AnomalyEvent.objects.count()
     false_positive_count = AnomalyEvent.objects.filter(feedback="false_positive").count()
+    source_health = {
+        row.source: {
+            "status": row.status,
+            "confidence_score": row.confidence_score,
+            "last_success_at": row.last_success_at.isoformat() if row.last_success_at else None,
+            "consecutive_failures": row.consecutive_failures,
+        }
+        for row in IngestionSourceHealth.objects.all()
+    }
     return JsonResponse({
         "current_flight_count": Aircraft.objects.filter(
             last_seen__gte=now - timedelta(minutes=5)
@@ -109,6 +126,8 @@ def health_metrics(_request):
         "websocket_connection_count": ws_connections,
         "cache": cache_stats,
         "cache_hit_ratio": cache_stats["hit_ratio"],
+        "celery_queue_depth": depth,
+        "source_health": source_health,
         "false_positive_rate": false_positive_count / total_anomalies if total_anomalies else 0,
     })
 
@@ -131,6 +150,23 @@ def prometheus_metrics(request):
         return HttpResponse("# prometheus_client not installed\n", content_type="text/plain")
 
 
+def openapi_fallback(_request):
+    """Small fallback schema when drf-spectacular is not installed."""
+    return JsonResponse({
+        "openapi": "3.0.3",
+        "info": {
+            "title": "SkyWatch Live API",
+            "version": "1.0.0",
+        },
+        "paths": {
+            "/api/v1/flights/": {"get": {"summary": "Current live flight states"}},
+            "/api/v1/anomalies/": {"get": {"summary": "Active anomalies"}},
+            "/api/v1/sources/": {"get": {"summary": "Source counts and source health"}},
+            "/api/v1/satellites/": {"get": {"summary": "Current propagated satellite catalog"}},
+        },
+    })
+
+
 urlpatterns = [
     path("healthz/", healthz, name="healthz"),
     path("readyz/", readyz, name="readyz"),
@@ -138,10 +174,22 @@ urlpatterns = [
     path("health/ready", health_ready, name="health-ready"),
     path("health/metrics", health_metrics, name="health-metrics"),
     path("metrics", prometheus_metrics, name="prometheus-metrics"),
-    path("admin/", admin.site.urls),
+    path(settings.ADMIN_URL_PATH, admin.site.urls),
     path("api/weather/metar", flight_views.MetarWeatherView.as_view(), name="weather-metar-legacy"),
     path("api/airspace/tfr", flight_views.TfrAirspaceView.as_view(), name="airspace-tfr-legacy"),
     path("api/airspace/restrictions", flight_views.AirspaceRestrictionsView.as_view(), name="airspace-restrictions-legacy"),
     path("api/playback", flight_views.PlaybackView.as_view(), name="playback-legacy"),
     path("api/v1/", include("flights.urls")),
 ]
+
+try:
+    from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+
+    urlpatterns += [
+        path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+        path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    ]
+except Exception:
+    urlpatterns += [
+        path("api/schema/", openapi_fallback, name="schema"),
+    ]

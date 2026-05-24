@@ -54,6 +54,14 @@ def redis_socket_reachable(url: str, timeout_seconds: float = 0.25) -> bool:
 
 
 DEBUG = env_bool("DJANGO_DEBUG", False)
+SKYWATCH_DEPLOYMENT_PROFILE = os.environ.get(
+    "SKYWATCH_DEPLOYMENT_PROFILE",
+    "local" if DEBUG else "production",
+).strip().lower()
+if SKYWATCH_DEPLOYMENT_PROFILE not in {"local", "staging", "production"}:
+    raise ImproperlyConfigured("SKYWATCH_DEPLOYMENT_PROFILE must be local, staging, or production.")
+
+SKYWATCH_DEMO_MODE = env_bool("SKYWATCH_DEMO_MODE", False)
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
@@ -61,6 +69,10 @@ if not SECRET_KEY:
         SECRET_KEY = "django-insecure-local-dev-only-change-me"
     else:
         raise ImproperlyConfigured("DJANGO_SECRET_KEY is required when DJANGO_DEBUG is false.")
+if SKYWATCH_DEPLOYMENT_PROFILE == "production" and (
+    len(SECRET_KEY) < 50 or SECRET_KEY.startswith("django-insecure") or SECRET_KEY in {"change-me", "local-dev-only-change-before-production"}
+):
+    raise ImproperlyConfigured("Production DJANGO_SECRET_KEY must be strong and unique.")
 
 ALLOWED_HOSTS = env_list(
     "ALLOWED_HOSTS",
@@ -68,6 +80,8 @@ ALLOWED_HOSTS = env_list(
 )
 if not DEBUG and not ALLOWED_HOSTS:
     raise ImproperlyConfigured("ALLOWED_HOSTS must be set when DJANGO_DEBUG is false.")
+if SKYWATCH_DEPLOYMENT_PROFILE == "production" and "*" in ALLOWED_HOSTS:
+    raise ImproperlyConfigured("Production ALLOWED_HOSTS cannot contain '*'.")
 
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 
@@ -91,6 +105,8 @@ INSTALLED_APPS = [
 
 if module_available("django_prometheus"):
     INSTALLED_APPS.insert(0, "django_prometheus")
+if module_available("drf_spectacular"):
+    INSTALLED_APPS.append("drf_spectacular")
 
 MIDDLEWARE = [
     "skywatch.middleware.RequestIdMiddleware",
@@ -175,6 +191,8 @@ ANALYTICS_DB_ALIAS = "replica" if "replica" in DATABASES else "default"
 # ---------------------------------------------------------------------------
 REDIS_URL = os.environ.get("REDIS_URL", "")
 ALLOW_IN_MEMORY_CHANNEL_LAYER = env_bool("ALLOW_IN_MEMORY_CHANNEL_LAYER", DEBUG)
+if SKYWATCH_DEPLOYMENT_PROFILE == "production" and ALLOW_IN_MEMORY_CHANNEL_LAYER:
+    raise ImproperlyConfigured("Production cannot use ALLOW_IN_MEMORY_CHANNEL_LAYER.")
 
 REDIS_AVAILABLE = bool(REDIS_URL)
 REDIS_FALLBACK_ACTIVE = False
@@ -254,6 +272,18 @@ CELERY_BEAT_SCHEDULE = {
         "task": "flights.tasks.synthetic_health_check",
         "schedule": 300.0,
     },
+    "cleanup-old-data-hourly": {
+        "task": "flights.tasks.cleanup_old_data",
+        "schedule": 3600.0,
+    },
+    "retrain-model-daily": {
+        "task": "flights.tasks.retrain_model",
+        "schedule": 86400.0,
+    },
+    "retrain-lstm-model-weekly": {
+        "task": "flights.tasks.retrain_lstm_model",
+        "schedule": 604800.0,
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -267,10 +297,24 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 50,
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "anon": "120/minute",
+        "playback": "30/minute",
+        "alert_mutation": "60/minute",
+        "enrichment": "120/minute",
     },
+    "EXCEPTION_HANDLER": "skywatch.api.exception_handler",
+}
+if module_available("drf_spectacular"):
+    REST_FRAMEWORK["DEFAULT_SCHEMA_CLASS"] = "drf_spectacular.openapi.AutoSchema"
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "SkyWatch Live API",
+    "DESCRIPTION": "Flight surveillance, anomaly, weather, airspace, source health, and satellite APIs.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 # ---------------------------------------------------------------------------
@@ -331,6 +375,13 @@ WEBSOCKET_PERMESSAGE_DEFLATE = env_bool("WEBSOCKET_PERMESSAGE_DEFLATE", True)
 WEBSOCKET_COMPRESSION_THRESHOLD_BYTES = int(os.environ.get("WEBSOCKET_COMPRESSION_THRESHOLD_BYTES", "1024"))
 METRICS_USER = os.environ.get("METRICS_USER", "")
 METRICS_PASSWORD = os.environ.get("METRICS_PASSWORD", "")
+if SKYWATCH_DEPLOYMENT_PROFILE == "production" and (not METRICS_USER or not METRICS_PASSWORD):
+    raise ImproperlyConfigured("Production metrics must be protected with METRICS_USER and METRICS_PASSWORD.")
+ADMIN_URL_PATH = os.environ.get("DJANGO_ADMIN_URL_PATH", "admin/" if DEBUG else "skywatch-admin/")
+if not ADMIN_URL_PATH.endswith("/"):
+    ADMIN_URL_PATH = f"{ADMIN_URL_PATH}/"
+if SKYWATCH_DEPLOYMENT_PROFILE == "production" and ADMIN_URL_PATH == "admin/":
+    raise ImproperlyConfigured("Set DJANGO_ADMIN_URL_PATH to a non-default path in production.")
 
 # ---------------------------------------------------------------------------
 # ML model
@@ -339,6 +390,10 @@ ML_MODEL_DIR = BASE_DIR / "ml" / "models"
 
 FLIGHT_ROUTE_LOOKBACK_HOURS = int(os.environ.get("FLIGHT_ROUTE_LOOKBACK_HOURS", "12"))
 FLIGHT_ROUTE_SESSION_GAP_MINUTES = int(os.environ.get("FLIGHT_ROUTE_SESSION_GAP_MINUTES", "90"))
+FLIGHT_STATE_RETENTION_DAYS = int(os.environ.get("FLIGHT_STATE_RETENTION_DAYS", "7"))
+FLIGHT_POSITION_RETENTION_DAYS = int(os.environ.get("FLIGHT_POSITION_RETENTION_DAYS", "7"))
+SYSTEM_METRICS_RETENTION_DAYS = int(os.environ.get("SYSTEM_METRICS_RETENTION_DAYS", "14"))
+RESOLVED_ANOMALY_RETENTION_DAYS = int(os.environ.get("RESOLVED_ANOMALY_RETENTION_DAYS", "30"))
 
 # ---------------------------------------------------------------------------
 # Standard Django

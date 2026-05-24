@@ -155,7 +155,7 @@ def _category_envelope(category):
                                    CATEGORY_ENVELOPES[0])
 
 
-def extract_features(flight_state, now_epoch=None, category_stats=None):
+def extract_features(flight_state, now_epoch=None, category_stats=None, history=None):
     """
     Extract 30-dimensional feature vector from a single flight state dict.
 
@@ -164,6 +164,7 @@ def extract_features(flight_state, now_epoch=None, category_stats=None):
         now_epoch: current epoch seconds (defaults to time.time())
         category_stats: optional dict of {category: {mean_speed, std_speed, mean_alt, std_alt, mean_vr, std_vr}}
                         for z-score normalization
+        history: optional list of prior chronological flight states
 
     Returns:
         numpy array of shape (30,)
@@ -188,6 +189,34 @@ def extract_features(flight_state, now_epoch=None, category_stats=None):
     position_age = max(0, now - time_position) if time_position else signal_age
     envelope = _category_envelope(category)
 
+    # Dynamic history query fallback (checks if Django registry is ready)
+    if history is None:
+        try:
+            from django.apps import apps
+            if apps.ready:
+                from flights.models import FlightState
+                from datetime import timedelta
+                from django.utils import timezone
+                icao24 = flight_state.get("icao24")
+                if icao24:
+                    cutoff = timezone.now() - timedelta(minutes=10)
+                    history_qs = FlightState.objects.filter(
+                        aircraft_id=icao24,
+                        timestamp__gte=cutoff,
+                        on_ground=False,
+                    ).order_by("timestamp").only("timestamp", "true_track", "last_contact", "time_position")
+                    
+                    history = []
+                    for h in history_qs:
+                        history.append({
+                            "timestamp": h.timestamp.timestamp(),
+                            "true_track": h.true_track,
+                            "last_contact": h.last_contact,
+                            "time_position": h.time_position,
+                        })
+        except Exception:
+            history = []
+
     # ═══════════════════════════════════════════════════════════════════════
     # GROUP 1: Kinematic features (8)
     # ═══════════════════════════════════════════════════════════════════════
@@ -205,12 +234,34 @@ def extract_features(flight_state, now_epoch=None, category_stats=None):
     acceleration_proxy = abs(vertical_rate) / max(velocity, 1.0)
     altitude_jerk = abs(vertical_rate) / max(altitude, 100)  # rate relative to altitude
 
-    # ALWAYS_CONSTANT: These temporal features require state history to calculate properly.
-    # They are hardcoded to 0.0 for now until the state buffer is fully integrated.
+    # Dynamic calculation using historical state sequence
     heading_rate = 0.0
+    if history and len(history) >= 2:
+        prev = history[-1]
+        prev_heading = prev.get("true_track")
+        prev_time = prev.get("timestamp")
+        current_heading = true_track
+        current_time = last_contact
+        if prev_heading is not None and current_heading is not None and prev_time and current_time:
+            time_diff = current_time - prev_time
+            if 0.5 < time_diff < 120:
+                heading_diff = abs((current_heading - prev_heading + 180) % 360 - 180)
+                heading_rate = heading_diff / time_diff
+
     signal_decay = 1.0 / (1.0 + signal_age / 60.0)  # exponential decay
     position_stale = min(position_age / 600.0, 1.0)  # normalized [0, 1]
-    contact_gap = min(signal_age, 600) / 600.0 if signal_age > 0 else 0.0
+
+    contact_gap = 0.0
+    if history and len(history) >= 2:
+        contacts = [h.get("last_contact") for h in history if h.get("last_contact") is not None]
+        contacts.append(last_contact)
+        contacts = sorted(list(set(contacts)))
+        if len(contacts) >= 2:
+            gaps = [contacts[i] - contacts[i-1] for i in range(1, len(contacts))]
+            max_gap = max(gaps)
+            contact_gap = min(max_gap / 60.0, 1.0)  # normalized to 1 min scale
+    else:
+        contact_gap = min(signal_age, 600) / 600.0 if signal_age > 0 else 0.0
 
     # ═══════════════════════════════════════════════════════════════════════
     # GROUP 3: Aircraft-type-normalized features (4)
@@ -236,10 +287,21 @@ def extract_features(flight_state, now_epoch=None, category_stats=None):
     # Longitude band: normalized to [-1, 1]
     lon_band = longitude / 180.0 if abs(longitude) <= 180 else 0.0
 
-    # ALWAYS_CONSTANT: These geospatial features require heading history to calculate properly.
-    # They are hardcoded to constant values until the state buffer is fully integrated.
+    # Dynamic calculation using historical state sequence
     heading_consistency = 1.0
+    if history and len(history) >= 3:
+        headings = [h.get("true_track") for h in history if h.get("true_track") is not None]
+        if len(headings) >= 3:
+            rads = [math.radians(h) for h in headings]
+            sin_mean = np.mean([math.sin(r) for r in rads])
+            cos_mean = np.mean([math.cos(r) for r in rads])
+            r = math.sqrt(sin_mean**2 + cos_mean**2)
+            heading_consistency = float(r)
+
     curvature = 0.0
+    if velocity > 5.0 and heading_rate > 0.0:
+        # Curvature: turn rate (rad/s) divided by velocity (m/s)
+        curvature = math.radians(heading_rate) / velocity
 
     # ═══════════════════════════════════════════════════════════════════════
     # GROUP 5: Interaction features (4)
@@ -308,14 +370,20 @@ def extract_features(flight_state, now_epoch=None, category_stats=None):
     ], dtype=np.float64)
 
 
-def extract_batch(flight_states, now_epoch=None, category_stats=None):
+def extract_batch(flight_states, now_epoch=None, category_stats=None, histories_map=None):
     """
     Extract features for a batch of flight states.
 
     Returns numpy array of shape (N, 30).
     """
+    histories_map = histories_map or {}
     features = np.array([
-        extract_features(s, now_epoch, category_stats) for s in flight_states
+        extract_features(
+            s, 
+            now_epoch, 
+            category_stats, 
+            history=histories_map.get(s.get("icao24"))
+        ) for s in flight_states
     ])
     features = np.nan_to_num(features, nan=0.0, posinf=1e6, neginf=-1e6)
     return features

@@ -12,8 +12,10 @@ const configuredApiBase = (
   import.meta.env.VITE_API_URL ||
   ""
 ).replace(/\/+$/, "");
+const configuredDemoMode = import.meta.env.VITE_SKYWATCH_DEMO_MODE === "true";
 
 function getSatelliteUrls(): string[] {
+  if (configuredDemoMode) return ["/api/satellites?demo=1"];
   const fallback = "/api/satellites";
   if (!configuredApiBase) return [fallback];
 

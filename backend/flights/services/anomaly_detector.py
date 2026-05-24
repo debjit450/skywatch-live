@@ -538,12 +538,42 @@ def score_flights(flight_states):
 
     from ml.features import extract_batch
 
+    # Bulk query recent states for all active flights in a single query for optimal performance
+    histories_map = {}
+    try:
+        from django.apps import apps
+        if apps.ready:
+            from flights.models import FlightState
+            from datetime import timedelta
+            from django.utils import timezone
+            active_icaos = [f.get("icao24") for f in flight_states if f.get("icao24")]
+            if active_icaos:
+                cutoff = timezone.now() - timedelta(minutes=10)
+                history_qs = FlightState.objects.filter(
+                    aircraft_id__in=active_icaos,
+                    timestamp__gte=cutoff,
+                    on_ground=False,
+                ).order_by("timestamp").only("aircraft_id", "timestamp", "true_track", "last_contact", "time_position")
+                
+                for h in history_qs:
+                    icao = h.aircraft_id
+                    if icao not in histories_map:
+                        histories_map[icao] = []
+                    histories_map[icao].append({
+                        "timestamp": h.timestamp.timestamp(),
+                        "true_track": h.true_track,
+                        "last_contact": h.last_contact,
+                        "time_position": h.time_position,
+                    })
+    except Exception as exc:
+        logger.debug("Failed bulk prefetch of flight histories: %s", exc)
+
     # Get category stats if available from the ensemble
     category_stats = None
     if isinstance(_model, dict):
         category_stats = _model.get("category_stats")
 
-    features = extract_batch(flight_states, category_stats=category_stats)
+    features = extract_batch(flight_states, category_stats=category_stats, histories_map=histories_map)
 
     # Handle NaN/Inf
     mask = np.all(np.isfinite(features), axis=1)

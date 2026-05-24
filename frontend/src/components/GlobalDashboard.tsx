@@ -12,6 +12,14 @@ import {
   Search,
   SlidersHorizontal,
   X,
+  Flame,
+  Shield,
+  Package,
+  Compass,
+  Crown,
+  Cpu,
+  Plane,
+  Helicopter,
 } from "lucide-react";
 import {
   memo,
@@ -27,6 +35,7 @@ import {
 import * as Tabs from "@radix-ui/react-tabs";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Status } from "@/hooks/useFlights";
+import type { SourceHealth } from "@/hooks/useFlights";
 import type { SatelliteStatus } from "@/hooks/useSatellites";
 import type { AnomalousFlight, Severity } from "@/lib/anomaly";
 import type { Flight } from "@/lib/opensky";
@@ -35,7 +44,13 @@ import { topSeverity } from "@/lib/anomaly";
 import { anomalyIcons } from "@/lib/icons";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { getDataSourceInfo } from "@/lib/data-sources";
-import { getClassesForLegend } from "@/lib/aircraft-class";
+import {
+  getClassesForLegend,
+  classifyFlight,
+  AIRCRAFT_CLASSES,
+  type AircraftClass,
+} from "@/lib/aircraft-class";
+import AircraftIcon from "@/components/AircraftIcon";
 import {
   ALTITUDE_BANDS,
   FLIGHT_FILTER_MODES,
@@ -117,6 +132,7 @@ interface Props {
   satelliteGroups: SatelliteGroupSummary[];
   satelliteStatus: SatelliteStatus;
   satelliteErrorMessage: string | null;
+  sourceHealth: Record<string, SourceHealth>;
   onSelect: (id: string) => void;
   onFiltersChange: Dispatch<SetStateAction<FlightFilters>>;
   onClearFilters: () => void;
@@ -139,6 +155,7 @@ function GlobalDashboard({
   satelliteGroups,
   satelliteStatus,
   satelliteErrorMessage,
+  sourceHealth,
   onSelect,
   onFiltersChange,
   onClearFilters,
@@ -160,6 +177,7 @@ function GlobalDashboard({
     let airborne = 0;
     let helicopters = 0;
     const sourceMap = new Map<string, number>();
+    const sourceConfidence = new Map<string, number[]>();
 
     for (const flight of flights) {
       if (!flight.on_ground) airborne += 1;
@@ -167,11 +185,23 @@ function GlobalDashboard({
       countries.set(flight.origin_country, (countries.get(flight.origin_country) || 0) + 1);
       const src = flight.data_source || "unknown";
       sourceMap.set(src, (sourceMap.get(src) || 0) + 1);
+      if (typeof flight.source_confidence === "number") {
+        const list = sourceConfidence.get(src) ?? [];
+        list.push(flight.source_confidence);
+        sourceConfidence.set(src, list);
+      }
     }
 
     const srcCounts = Array.from(sourceMap.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([key, count]) => ({ key, count, info: getDataSourceInfo(key) }));
+      .map(([key, count]) => {
+        const confidences = sourceConfidence.get(key) ?? [];
+        const confidence =
+          confidences.length > 0
+            ? confidences.reduce((total, item) => total + item, 0) / confidences.length
+            : null;
+        return { key, count, confidence, health: sourceHealth[key], info: getDataSourceInfo(key) };
+      });
 
     return {
       activeCount: flights.length,
@@ -184,7 +214,7 @@ function GlobalDashboard({
       recentFlights: flights.slice(0, 12),
       sourceCounts: srcCounts,
     };
-  }, [flights]);
+  }, [flights, sourceHealth]);
 
   const countryOptions = useMemo(() => {
     const countries = new Map<string, number>();
@@ -408,6 +438,9 @@ function GlobalDashboard({
             countryOptions={countryOptions}
             onFiltersChange={onFiltersChange}
             onClearFilters={onClearFilters}
+            flights={flights}
+            allFlights={allFlights}
+            anomalies={anomalies}
           />
 
           <Tabs.List className="flex gap-6 mt-4 border-b border-transparent">
@@ -470,7 +503,7 @@ function GlobalDashboard({
                       <span className="text-zinc-500">{sourceCounts.length} active</span>
                     </h3>
                     <ul className="divide-y divide-white/5">
-                      {sourceCounts.map(({ key, count, info }) => (
+                      {sourceCounts.map(({ key, count, confidence, health, info }) => (
                         <li
                           key={key}
                           className="flex items-center justify-between py-2 hover:bg-white/5 px-2 -mx-2 rounded-md transition-colors"
@@ -484,11 +517,21 @@ function GlobalDashboard({
                               {info.shortName}
                             </span>
                             <span className="text-[10px] text-zinc-500 px-1 border border-white/10 rounded">
-                              {info.type}
+                              {health?.status && health.status !== "ok" ? health.status : info.type}
                             </span>
                           </div>
                           <span className="text-xs font-mono text-zinc-400">
                             {count.toLocaleString()}
+                            {confidence !== null && (
+                              <em className="ml-2 not-italic text-blue-400">
+                                {Math.round(confidence * 100)}%
+                              </em>
+                            )}
+                            {health?.last_success_at && (
+                              <em className="ml-2 not-italic text-zinc-500">
+                                {relativeTime(new Date(health.last_success_at).getTime())}
+                              </em>
+                            )}
                           </span>
                         </li>
                       ))}
@@ -837,12 +880,18 @@ function FilterWorkbench({
   countryOptions,
   onFiltersChange,
   onClearFilters,
+  flights,
+  allFlights,
+  anomalies,
 }: {
   filters: FlightFilters;
   activeFilterLabels: string[];
   countryOptions: Array<[string, number]>;
   onFiltersChange: Dispatch<SetStateAction<FlightFilters>>;
   onClearFilters: () => void;
+  flights: Flight[];
+  allFlights: Flight[];
+  anomalies: AnomalousFlight[];
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -851,6 +900,41 @@ function FilterWorkbench({
   };
 
   const legendClasses = useMemo(() => getClassesForLegend(), []);
+
+  const classCounts = useMemo(() => {
+    const counts = {
+      commercial: 0,
+      cargo: 0,
+      military: 0,
+      general_aviation: 0,
+      helicopter: 0,
+      business_jet: 0,
+      uav: 0,
+    };
+    for (const flight of allFlights) {
+      const cls = classifyFlight(flight);
+      if (cls in counts) {
+        counts[cls as keyof typeof counts]++;
+      }
+    }
+    return counts;
+  }, [allFlights]);
+
+  const modeCounts = useMemo(() => {
+    let airborne = 0;
+    let emergency = 0;
+    for (const flight of allFlights) {
+      if (!flight.on_ground) airborne++;
+      if (flight.squawk && ["7500", "7600", "7700"].includes(flight.squawk)) emergency++;
+    }
+    return {
+      all: allFlights.length,
+      airborne,
+      ground: allFlights.length - airborne,
+      anomaly: anomalies.length,
+      emergency,
+    };
+  }, [allFlights, anomalies]);
 
   return (
     <div className="mb-2">
@@ -896,6 +980,135 @@ function FilterWorkbench({
           >
             <Filter className="w-3.5 h-3.5" />
           </button>
+        </div>
+      </div>
+
+      {/* ── Quick Filters & Status Toggles ── */}
+      <div className="flex flex-col gap-2 mb-3">
+        {/* Status Mode Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5 select-none">
+          {/* ALL Tracks Pill */}
+          <button
+            type="button"
+            className={`flex items-center gap-1 shrink-0 px-2.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${
+              filters.mode === "all"
+                ? "bg-blue-500/20 border-blue-500/40 text-blue-400"
+                : "bg-white/[0.02] border-white/5 text-[var(--sw-muted)] hover:bg-white/[0.04] hover:text-[var(--sw-text)]"
+            }`}
+            onClick={() => setFilter("mode", "all")}
+          >
+            <Activity className="w-3 h-3" />
+            <span>All ({modeCounts.all})</span>
+          </button>
+
+          {/* Anomalies Pill */}
+          <button
+            type="button"
+            className={`flex items-center gap-1 shrink-0 px-2.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${
+              filters.mode === "anomaly"
+                ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.2)]"
+                : modeCounts.anomaly > 0
+                  ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-400/80 animate-pulse hover:bg-emerald-950/30"
+                  : "bg-white/[0.02] border-white/5 text-[var(--sw-muted)] hover:bg-white/[0.04] hover:text-[var(--sw-text)]"
+            }`}
+            onClick={() => setFilter("mode", "anomaly")}
+          >
+            <AlertTriangle className="w-3 h-3" />
+            <span>Anomalies ({modeCounts.anomaly})</span>
+          </button>
+
+          {/* Emergencies Pill */}
+          <button
+            type="button"
+            className={`flex items-center gap-1 shrink-0 px-2.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${
+              filters.mode === "emergency"
+                ? "bg-rose-500/20 border-rose-500/50 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)] animate-pulse"
+                : modeCounts.emergency > 0
+                  ? "bg-rose-950/30 border-rose-500/30 text-rose-400 animate-pulse hover:bg-rose-950/40"
+                  : "bg-white/[0.02] border-white/5 text-[var(--sw-muted)] hover:bg-white/[0.04] hover:text-[var(--sw-text)]"
+            }`}
+            onClick={() => setFilter("mode", "emergency")}
+          >
+            <Flame className="w-3 h-3" />
+            <span>Emergencies ({modeCounts.emergency})</span>
+          </button>
+
+          {/* Airborne Pill */}
+          <button
+            type="button"
+            className={`flex items-center gap-1 shrink-0 px-2.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${
+              filters.mode === "airborne"
+                ? "bg-blue-500/20 border-blue-500/40 text-blue-400"
+                : "bg-white/[0.02] border-white/5 text-[var(--sw-muted)] hover:bg-white/[0.04] hover:text-[var(--sw-text)]"
+            }`}
+            onClick={() => setFilter("mode", "airborne")}
+          >
+            <Plane className="w-3 h-3 rotate-45" />
+            <span>Air ({modeCounts.airborne})</span>
+          </button>
+
+          {/* Ground Pill */}
+          <button
+            type="button"
+            className={`flex items-center gap-1 shrink-0 px-2.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${
+              filters.mode === "ground"
+                ? "bg-blue-500/20 border-blue-500/40 text-blue-400"
+                : "bg-white/[0.02] border-white/5 text-[var(--sw-muted)] hover:bg-white/[0.04] hover:text-[var(--sw-text)]"
+            }`}
+            onClick={() => setFilter("mode", "ground")}
+          >
+            <Activity className="w-3 h-3 rotate-90" />
+            <span>Ground ({modeCounts.ground})</span>
+          </button>
+        </div>
+
+        {/* Aircraft Class Grid */}
+        <div className="grid grid-cols-2 gap-1 px-0.5">
+          {legendClasses.map((item) => {
+            const isActive = filters.aircraftClass === item.key;
+            const count = classCounts[item.key as keyof typeof classCounts] || 0;
+            return (
+              <button
+                type="button"
+                key={item.key}
+                onClick={() => setFilter("aircraftClass", isActive ? "all" : item.key)}
+                className={`flex items-center justify-between p-2 rounded-lg border text-left transition-all ${
+                  isActive
+                    ? ""
+                    : "bg-white/[0.01] border-white/5 text-[var(--sw-muted)] hover:bg-white/[0.04] hover:border-white/10 hover:text-[var(--sw-text)]"
+                }`}
+                style={
+                  isActive
+                    ? {
+                        backgroundColor: item.bgColor,
+                        borderColor: item.borderColor,
+                        color: item.color,
+                        boxShadow: `0 0 10px ${item.glowColor}`,
+                      }
+                    : undefined
+                }
+              >
+                <div className="flex items-center gap-1.5 truncate">
+                  {/* Swatch matching the legend and map markers! */}
+                  <AircraftIcon
+                    aircraftClass={item.key}
+                    size={12}
+                    className="shrink-0"
+                    style={{
+                      color: item.color,
+                      filter: `drop-shadow(0 0 4px ${item.color}60)`,
+                    }}
+                  />
+                  <span className="text-[10px] font-bold uppercase tracking-wider truncate">
+                    {item.shortLabel}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono font-medium shrink-0 ml-1 opacity-70">
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1167,6 +1380,13 @@ function FlightFeedCard({
   const airline = airlineFromCallsign(flight.callsign);
   const alt = altitudeFt(flight.baro_altitude ?? flight.geo_altitude);
   const speed = speedKt(flight.velocity);
+  const confidence =
+    typeof flight.source_confidence === "number"
+      ? `${Math.round(flight.source_confidence * 100)}%`
+      : null;
+
+  const aircraftClass = classifyFlight(flight);
+  const classColor = AIRCRAFT_CLASSES[aircraftClass]?.color || "#64748b";
 
   return (
     <button
@@ -1177,9 +1397,20 @@ function FlightFeedCard({
       }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
-        <span className="text-sm font-bold font-mono text-[var(--sw-text)] tracking-tight">
-          {flight.callsign?.trim() || flight.icao24.toUpperCase()}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <AircraftIcon
+            aircraftClass={aircraftClass}
+            heading={flight.true_track ?? undefined}
+            size={12}
+            style={{
+              color: classColor,
+              filter: `drop-shadow(0 0 3px ${classColor}50)`,
+            }}
+          />
+          <span className="text-sm font-bold font-mono text-[var(--sw-text)] tracking-tight truncate">
+            {flight.callsign?.trim() || flight.icao24.toUpperCase()}
+          </span>
+        </div>
         <span className="text-[10px] font-mono bg-[var(--sw-surface-soft)] border border-[var(--sw-border)] px-1.5 py-0.5 rounded text-[var(--sw-muted)] tracking-wider">
           {countryCode(flight.origin_country)}
         </span>
@@ -1191,12 +1422,13 @@ function FlightFeedCard({
         <span
           className={`text-[9px] font-bold uppercase tracking-wider ${flight.on_ground ? "text-amber-500" : "text-blue-400"}`}
         >
-          {flight.on_ground ? "GND" : "AIR"}
+          {flight.on_ground ? "GROUND" : "AIR"}
         </span>
       </div>
       <div className="flex justify-between items-center text-xs font-mono font-medium text-[var(--sw-dim)]">
         <span>{fmt(alt, { suffix: " ft", digits: 0 })}</span>
         <span className="text-[var(--sw-text)]">{fmt(speed, { suffix: " kt", digits: 0 })}</span>
+        {confidence && <span className="text-[var(--sw-blue)]">{confidence}</span>}
       </div>
     </button>
   );

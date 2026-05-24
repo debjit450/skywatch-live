@@ -13,7 +13,12 @@ export type SkywatchMarkerIconName =
   | "vehicle"
   | "airport"
   | "helipad"
-  | "satellite";
+  | "satellite"
+  | "weatherVfr"
+  | "weatherMvfr"
+  | "weatherIfr"
+  | "weatherLifr"
+  | "weatherUnknown";
 
 export interface SkywatchDeckIcon {
   id: string;
@@ -44,6 +49,21 @@ const FIGHTER_JET_SVG =
 const HELICOPTER_SVG =
   '<path d="M60.64 28.1a1.24 1.24 0 0 0-1.27-1.22l-14.89-.33c.61-.91 1.51-2.05 2.78-3.57 6.16-7.36 4.19-9.8 4.19-9.8s-2.28-2-9.91 3.84c-1.31 1-2.34 1.76-3.19 2.31l.3-14.09a1.19 1.19 0 1 0-2.38 0l-.34 15.33c-2 .44-3-1.25-7.33-3.31 0 0-2.34.91-2.86 2.77a39.41 39.41 0 0 1 3.39 6.24l-14.5-.31a1.2 1.2 0 1 0-.05 2.39l14.6.31a1.28 1.28 0 0 0 .35.59l-9.69 12.36-4.57-3.24.54-1.25S12 39.7 11.5 41.34l-.14 2 1.37-.48.41-1.31L16 45.91s-.79.9-.24 1.47 1.55-.1 1.55-.1l4.35 3.1-1.32.35-.54 1.35h2c1.65-.39 4.4-4.13 4.4-4.13l-1.28.49-3-4.71 12.81-9.15a1.31 1.31 0 0 0 1 .45l-.32 15a1.19 1.19 0 1 0 2.38 0l.21-14.8a42.17 42.17 0 0 1 5.67 3.47c1.88-.44 2.87-2.75 2.87-2.75-1.71-4.1-3.24-5.34-3.09-7l15.87.34a1.25 1.25 0 0 0 1.32-1.19Z"/>';
 
+const WEATHER_VFR_SVG =
+  '<circle cx="32" cy="32" r="12" fill="#10b981" stroke="#34d399" stroke-width="2.5"/><path d="M32 6v6M32 52v6M6 32h6M52 32h6M13.6 13.6l4.2 4.2M44.2 44.2l4.2 4.2M13.6 48.4l4.2-4.2M44.2 17.8l4.2-4.2" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>';
+
+const WEATHER_MVFR_SVG =
+  '<circle cx="26" cy="26" r="10" fill="#3b82f6" stroke="#60a5fa" stroke-width="2"/><path d="M26 6v4M6 26h4M11.9 11.9l2.8 2.8M40.1 11.9l-2.8 2.8" stroke="#60a5fa" stroke-width="2.5" stroke-linecap="round"/><path d="M46 38a10 10 0 0 0-18-6 12 12 0 1 0-4 23.5h22A10 10 0 0 0 46 38z" fill="#1e293b" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round"/>';
+
+const WEATHER_IFR_SVG =
+  '<path d="M46 32a11 11 0 0 0-20-6 14 14 0 1 0-4 27.5h24A11 11 0 0 0 46 32z" fill="#b45309" stroke="#f59e0b" stroke-width="2" stroke-linejoin="round"/><path d="M20 54l-2 6M28 54l-2 6M36 54l-2 6" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round"/>';
+
+const WEATHER_LIFR_SVG =
+  '<path d="M46 32a11 11 0 0 0-20-6 14 14 0 1 0-4 27.5h24A11 11 0 0 0 46 32z" fill="#701a75" stroke="#d946ef" stroke-width="2" stroke-linejoin="round"/><path d="M28 48l-4 8h6l-3 6" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" fill="none" stroke-linejoin="round"/>';
+
+const WEATHER_UNKNOWN_SVG =
+  '<path d="M46 34a10 10 0 0 0-18-6 12 12 0 1 0-4 23.5h22A10 10 0 0 0 46 34z" fill="#475569" stroke="#64748b" stroke-width="2" stroke-linejoin="round"/>';
+
 const AIRPORT_SVG =
   '<path d="M2.6 17h19v2h-19v-2zM20.7 5h-2.5L7.1 10.8l-4-2.1-1 .8L4.7 13l-.7.5.3.7 6.8-2.2-1.3 2.2h1.8l4.1-4.5 6.1-3.6S22.3 5 20.7 5z" fill="#404040"/>';
 
@@ -67,6 +87,11 @@ export const MARKER_ICON_SVG_CONTENT: Record<SkywatchMarkerIconName, string> = {
   helipad: HELIPAD_SVG,
   satellite:
     '<g fill="black"><path d="M13 18h14v28H13zM37 18h14v28H37zM29 24h6l5 5v10l-5 5h-6l-5-5V29z"/><path d="M28 31H15v-4h13zm21 0H36v-4h13zM28 39H15v-4h13zm21 0H36v-4h13zM31 9h3v12h-3zM33 9l8-5 2 3-9 6zM31 9l-8-5-2 3 9 6z"/></g>',
+  weatherVfr: WEATHER_VFR_SVG,
+  weatherMvfr: WEATHER_MVFR_SVG,
+  weatherIfr: WEATHER_IFR_SVG,
+  weatherLifr: WEATHER_LIFR_SVG,
+  weatherUnknown: WEATHER_UNKNOWN_SVG,
 };
 
 export const MARKER_ICON_VIEW_BOX: Record<SkywatchMarkerIconName, string> = {
@@ -83,6 +108,11 @@ export const MARKER_ICON_VIEW_BOX: Record<SkywatchMarkerIconName, string> = {
   airport: "0 0 24 24",
   helipad: "0 -0.5 17 17",
   satellite: "0 0 64 64",
+  weatherVfr: "0 0 64 64",
+  weatherMvfr: "0 0 64 64",
+  weatherIfr: "0 0 64 64",
+  weatherLifr: "0 0 64 64",
+  weatherUnknown: "0 0 64 64",
 };
 
 export const MARKER_ICON_HEADING_OFFSET: Record<SkywatchMarkerIconName, number> = {
@@ -99,14 +129,19 @@ export const MARKER_ICON_HEADING_OFFSET: Record<SkywatchMarkerIconName, number> 
   airport: 0,
   helipad: 0,
   satellite: 0,
+  weatherVfr: 0,
+  weatherMvfr: 0,
+  weatherIfr: 0,
+  weatherLifr: 0,
+  weatherUnknown: 0,
 };
 
 const MARKER_ICON_MASK: Record<SkywatchMarkerIconName, boolean> = {
-  plane: false,
-  cargoPlane: false,
-  businessJet: false,
-  fighterJet: false,
-  jet: false,
+  plane: true,
+  cargoPlane: true,
+  businessJet: true,
+  fighterJet: true,
+  jet: true,
   helicopter: true,
   glider: true,
   uav: true,
@@ -115,6 +150,11 @@ const MARKER_ICON_MASK: Record<SkywatchMarkerIconName, boolean> = {
   airport: true,
   helipad: true,
   satellite: true,
+  weatherVfr: false,
+  weatherMvfr: false,
+  weatherIfr: false,
+  weatherLifr: false,
+  weatherUnknown: false,
 };
 
 export function markerIconForAircraftClass(type: AircraftClass): SkywatchMarkerIconName {
@@ -208,4 +248,9 @@ export const MARKER_DECK_ICONS: Record<SkywatchMarkerIconName, SkywatchDeckIcon>
   airport: deckIcon("airport"),
   helipad: deckIcon("helipad"),
   satellite: deckIcon("satellite"),
+  weatherVfr: deckIcon("weatherVfr"),
+  weatherMvfr: deckIcon("weatherMvfr"),
+  weatherIfr: deckIcon("weatherIfr"),
+  weatherLifr: deckIcon("weatherLifr"),
+  weatherUnknown: deckIcon("weatherUnknown"),
 };

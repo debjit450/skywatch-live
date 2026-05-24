@@ -15,7 +15,7 @@ import React, { memo, useState, useRef, useEffect, useMemo } from "react";
 import * as Select from "@radix-ui/react-select";
 import { COUNTRIES } from "@/lib/countries";
 import type { AirportStatus } from "@/hooks/useAirports";
-import type { Status } from "@/hooks/useFlights";
+import type { SourceHealth, Status } from "@/hooks/useFlights";
 import type { SatelliteStatus } from "@/hooks/useSatellites";
 import { formatClock } from "@/lib/format";
 import type { Flight } from "@/lib/opensky";
@@ -42,6 +42,9 @@ interface Props {
   satelliteStatus: SatelliteStatus;
   feedSource: string | null;
   sourceCounts: Record<string, number>;
+  sourceHealth: Record<string, SourceHealth>;
+  sourceConflictCount: number;
+  degraded: boolean;
   staleCount: number;
   maxAgeSeconds: number | null;
   filteredFlightCount: number;
@@ -69,6 +72,9 @@ function TopBar({
   satelliteStatus,
   feedSource,
   sourceCounts,
+  sourceHealth,
+  sourceConflictCount,
+  degraded,
   staleCount,
   maxAgeSeconds,
   filteredFlightCount,
@@ -155,9 +161,14 @@ function TopBar({
       : feedSource
         ? feedSource.replace(/_/g, " ")
         : "live feed";
+  const degradedSourceCount = Object.values(sourceHealth || {}).filter(
+    (item) => item.status && item.status !== "ok" && item.status !== "disabled",
+  ).length;
 
   const sourceDetail = [
     sourceBreakdown,
+    degraded ? `${degradedSourceCount || 1} degraded` : null,
+    sourceConflictCount > 0 ? `${sourceConflictCount.toLocaleString()} source conflicts` : null,
     maxAgeSeconds !== null ? `${Math.round(maxAgeSeconds)}s max age` : null,
     staleCount > 0 ? `${staleCount.toLocaleString()} stale rejected` : null,
   ]
@@ -235,7 +246,7 @@ function TopBar({
           label="Updated"
           value={formatClock(lastUpdated)}
           detail={sourceDetail}
-          tone={staleCount > 0 ? "warn" : "neutral"}
+          tone={degraded || staleCount > 0 ? "warn" : "neutral"}
           mono
         />
       </div>
@@ -264,6 +275,12 @@ function TopBar({
               align="end"
             >
               <Select.Viewport className="p-1 max-h-[300px] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-200 dark:scrollbar-thumb-white/10">
+                <Select.Item
+                  value="Global"
+                  className="flex items-center px-3 py-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300 rounded-lg cursor-pointer outline-none data-[highlighted]:bg-emerald-50 dark:data-[highlighted]:bg-emerald-500/20 data-[highlighted]:text-emerald-600 dark:data-[highlighted]:text-emerald-400 select-none transition-all duration-200"
+                >
+                  <Select.ItemText>Global</Select.ItemText>
+                </Select.Item>
                 {COUNTRIES.map((c) => (
                   <Select.Item
                     key={c.code}
@@ -536,20 +553,19 @@ function SummaryItem({
 }
 
 const TELEMETRY_LEGEND = [
-  { label: "Normal Flight", color: "#00e5ff", shape: "filled" as const },
   { label: "Selected Flight", color: "#3b82f6", shape: "ring" as const },
   { label: "Anomalous Flight", color: "#f59e0b", shape: "ring" as const },
-  { label: "Ground Aircraft", color: "#52525b", shape: "dot" as const },
+  { label: "Ground Aircraft", color: "#64748b", shape: "dot" as const },
   { label: "Flight Track", color: "#3b82f6", shape: "route" as const },
+  { label: "Planned Route", color: "#facc15", shape: "route" as const },
 ];
 
 const AIRPORT_LEGEND = [
-  { label: "Large / Hub", color: "#a882c8", shape: "square" as const },
-  { label: "Medium / Regional", color: "#8296c8", shape: "square" as const },
-  { label: "Small Airport", color: "#8c8c8c", shape: "square" as const },
-  { label: "Heliport", color: "#c86464", shape: "square" as const },
-  { label: "Seaplane Base", color: "#50b4a0", shape: "square" as const },
-  { label: "Closed Airport", color: "#505a64", shape: "square" as const },
+  { label: "Large / Hub", color: "#a855f7", shape: "airport" as const },
+  { label: "Medium / Regional", color: "#60a5fa", shape: "airport" as const },
+  { label: "Small / Local", color: "#94a3b8", shape: "airport" as const },
+  { label: "Heliport", color: "#fb7187", shape: "helipad" as const },
+  { label: "Route Origin/Dest", color: "#facc15", shape: "airport" as const },
 ];
 
 const TFR_LEGEND = [
@@ -558,10 +574,10 @@ const TFR_LEGEND = [
 ];
 
 const WEATHER_LEGEND = [
-  { label: "VFR (Visual)", color: "#10b981", shape: "filled" as const },
-  { label: "MVFR (Marginal)", color: "#3b82f6", shape: "filled" as const },
-  { label: "IFR (Instrument)", color: "#ef4444", shape: "filled" as const },
-  { label: "LIFR (Low IFR)", color: "#d946ef", shape: "filled" as const },
+  { label: "VFR (Visual)", color: "#10b981", shape: "weatherVfr" as const },
+  { label: "MVFR (Marginal)", color: "#3b82f6", shape: "weatherMvfr" as const },
+  { label: "IFR (Instrument)", color: "#ef4444", shape: "weatherIfr" as const },
+  { label: "LIFR (Low IFR)", color: "#d946ef", shape: "weatherLifr" as const },
 ];
 
 const SATELLITE_LEGEND = [
@@ -598,7 +614,9 @@ function Swatch({ color, shape = "filled" }: { color: string; shape?: SwatchShap
   }
 
   if (isMarkerIconShape(shape)) {
-    const svgContent = MARKER_ICON_SVG_CONTENT[shape].replaceAll("black", "currentColor");
+    const svgContent = MARKER_ICON_SVG_CONTENT[shape]
+      .replace(/fill="[^"]+"/g, 'fill="currentColor"')
+      .replace(/stroke="[^"]+"/g, 'stroke="currentColor"');
 
     return (
       <span

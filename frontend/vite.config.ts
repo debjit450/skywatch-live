@@ -42,4 +42,25 @@ export default defineConfig({
     host: "::",
     port: 8080,
   },
+  build: {
+    target: "es2022",
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (
+            id.includes("@deck.gl") ||
+            id.includes("maplibre-gl") ||
+            id.includes("react-map-gl")
+          ) {
+            return "map-vendor";
+          }
+          if (id.includes("recharts")) return "charts-vendor";
+          if (id.includes("lucide-react")) return "icons-vendor";
+          return "vendor";
+        },
+      },
+    },
+  },
 });

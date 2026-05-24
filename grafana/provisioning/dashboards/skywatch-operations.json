@@ -1,0 +1,51 @@
+{
+  "uid": "skywatch-operations",
+  "title": "SkyWatch Operations",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active Flights",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "skywatch_active_flights_total", "legendFormat": "flights" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Source Fetch Latency",
+      "gridPos": { "x": 6, "y": 0, "w": 9, "h": 8 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(skywatch_source_fetch_latency_seconds_bucket[5m])) by (le, source))", "legendFormat": "{{source}} p95" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Source Confidence",
+      "gridPos": { "x": 15, "y": 0, "w": 9, "h": 8 },
+      "targets": [{ "expr": "skywatch_source_confidence", "legendFormat": "{{source}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "API Latency p95",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(skywatch_api_latency_seconds_bucket[5m])) by (le, path))", "legendFormat": "{{path}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Anomalies",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
+      "targets": [{ "expr": "sum(rate(skywatch_anomalies_detected_total[5m])) by (severity)", "legendFormat": "{{severity}}" }]
+    },
+    {
+      "type": "stat",
+      "title": "WebSocket Connections",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 4 },
+      "targets": [{ "expr": "skywatch_websocket_connections", "legendFormat": "connections" }]
+    },
+    {
+      "type": "stat",
+      "title": "Celery Queue Depth",
+      "gridPos": { "x": 18, "y": 12, "w": 6, "h": 4 },
+      "targets": [{ "expr": "skywatch_celery_queue_depth", "legendFormat": "queue" }]
+    }
+  ]
+}

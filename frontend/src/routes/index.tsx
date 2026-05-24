@@ -3,11 +3,12 @@ import {
   lazy,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import {
   AlertTriangle,
@@ -26,8 +27,11 @@ import {
 import { useFlights } from "@/hooks/useFlights";
 import { useAirports } from "@/hooks/useAirports";
 import { useEnrichment } from "@/hooks/useEnrichment";
+import { useEmergencyToasts, type EmergencyToast } from "@/hooks/useEmergencyToasts";
 import { useFlightTrack } from "@/hooks/useFlightTrack";
+import { usePersistentTheme } from "@/hooks/usePersistentTheme";
 import { useSatellites } from "@/hooks/useSatellites";
+import { useSelectedLiveTrail } from "@/hooks/useSelectedLiveTrail";
 import TopBar from "@/components/TopBar";
 import GlobalDashboard from "@/components/GlobalDashboard";
 import FlightDetailPanel from "@/components/FlightDetailPanel";
@@ -40,6 +44,8 @@ import {
   analyzeFlightTrack,
   calculateSegmentDistanceKm,
   detectFlightLayovers,
+  flightTrackDistanceKm,
+  flightTrackPointTimeMs,
   sanitizeTrackSegments,
 } from "@/lib/flightTrack";
 import { predictFlightState } from "@/lib/prediction";
@@ -55,53 +61,8 @@ const MapView = lazy(() => import("@/components/MapView"));
 const AnalyticsPanel = lazy(() => import("@/components/AnalyticsPanel"));
 const AlertRulesPanel = lazy(() => import("@/components/AlertRulesPanel"));
 const DashboardLayoutPanel = lazy(() => import("@/components/DashboardLayoutPanel"));
-type ThemeMode = "dark" | "light";
-const THEME_STORAGE_KEY = "skywatch-theme";
 const TOUR_STORAGE_KEY = "skywatch_tour_complete";
-const SELECTED_TRAIL_MAX_POINTS = 360;
 const MIN_TRAIL_DISTANCE_KM = 0.03;
-const EMERGENCY_REPEAT_MS = 10 * 60 * 1000;
-const EMERGENCY_TOAST_TTL_MS = 45_000;
-const EMERGENCY_SQUAWKS = new Set(["7500", "7600", "7700"]);
-const SQUAWK_STORAGE_KEY = "skywatch-seen-squawks";
-
-interface EmergencyToast {
-  key: string;
-  icao24: string;
-  callsign: string;
-  squawk: string;
-  label: string;
-  detectedAt: number;
-}
-
-function trackPointTimeMs(point: FlightTrackPoint): number {
-  const ms = Date.parse(point.time);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-function trackDistanceKm(a: FlightTrackPoint, b: FlightTrackPoint): number {
-  const toRad = (degrees: number) => (degrees * Math.PI) / 180;
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const dLat = toRad(b.lat - a.lat);
-  const dLon = toRad(b.lon - a.lon);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
-}
-
-function flightToTrackPoint(flight: Flight): FlightTrackPoint | null {
-  if (flight.latitude === null || flight.longitude === null) return null;
-  const timestamp = flight.time_position ?? flight.last_contact ?? Date.now() / 1000;
-  return {
-    lat: flight.latitude,
-    lon: flight.longitude,
-    alt: flight.baro_altitude ?? flight.geo_altitude ?? null,
-    speed: flight.velocity ?? null,
-    heading: flight.true_track ?? null,
-    time: new Date(timestamp * 1000).toISOString(),
-    onGround: flight.on_ground,
-  };
-}
 
 function mergeDisplayTrack(
   baseTrack: FlightTrackData | null | undefined,
@@ -113,13 +74,13 @@ function mergeDisplayTrack(
   const segments = baseTrack?.segments ? [...baseTrack.segments] : [];
   const basePoints = segments
     .flatMap((segment) => segment.points)
-    .sort((a, b) => trackPointTimeMs(a) - trackPointTimeMs(b));
+    .sort((a, b) => flightTrackPointTimeMs(a) - flightTrackPointTimeMs(b));
   const lastBasePoint = basePoints[basePoints.length - 1];
   const livePoints = lastBasePoint
     ? liveTrail.filter(
         (point) =>
-          trackPointTimeMs(point) > trackPointTimeMs(lastBasePoint) + 1_000 &&
-          trackDistanceKm(point, lastBasePoint) > MIN_TRAIL_DISTANCE_KM,
+          flightTrackPointTimeMs(point) > flightTrackPointTimeMs(lastBasePoint) + 1_000 &&
+          flightTrackDistanceKm(point, lastBasePoint) > MIN_TRAIL_DISTANCE_KM,
       )
     : liveTrail;
 
@@ -159,12 +120,6 @@ function mergeDisplayTrack(
   };
 }
 
-function emergencySquawkLabel(squawk: string): string {
-  if (squawk === "7500") return "Hijack squawk";
-  if (squawk === "7600") return "Radio failure";
-  return "General emergency";
-}
-
 export const Route = createFileRoute("/")({
   component: Index,
   head: () => ({
@@ -191,6 +146,9 @@ function Index() {
     authenticated,
     feedSource,
     sourceCounts,
+    sourceHealth,
+    sourceConflictCount,
+    degraded,
     staleCount,
     maxAgeSeconds,
     refresh,
@@ -215,35 +173,16 @@ function Index() {
   const [focusKey, setFocusKey] = useState(0);
   const [selectedCountry, setSelectedCountry] = useState<string>("India");
   const [flightFilters, setFlightFilters] = useState<FlightFilters>(DEFAULT_FLIGHT_FILTERS);
-  const [theme, setTheme] = useState<ThemeMode>("dark");
-  const [themeReady, setThemeReady] = useState(false);
-  const [selectedLiveTrail, setSelectedLiveTrail] = useState<FlightTrackPoint[]>([]);
-  const [emergencyToasts, setEmergencyToasts] = useState<EmergencyToast[]>([]);
+  const { theme, toggleTheme } = usePersistentTheme();
+  const { alerts: emergencyToasts, dismissAlert: dismissEmergencyToast } = useEmergencyToasts(
+    flights,
+    lastUpdated,
+  );
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showAlertRules, setShowAlertRules] = useState(false);
   const [showLayoutPanel, setShowLayoutPanel] = useState(false);
   const [tourStep, setTourStep] = useState<number | null>(null);
-  const selectedTrailIdRef = useRef<string | null>(null);
-  const seenEmergencyRef = useRef<Map<string, number>>(new Map());
-
-  // Hydrate seenEmergencyRef from localStorage on mount
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(SQUAWK_STORAGE_KEY);
-      if (raw) {
-        const entries = JSON.parse(raw) as [string, number][];
-        const now = Date.now();
-        const fresh = entries.filter(([, ts]) => now - ts < EMERGENCY_REPEAT_MS);
-        seenEmergencyRef.current = new Map(fresh);
-        if (fresh.length !== entries.length) {
-          window.localStorage.setItem(SQUAWK_STORAGE_KEY, JSON.stringify(fresh));
-        }
-      }
-    } catch {
-      /* ignore corrupt storage */
-    }
-  }, []);
 
   const resetSelectedTracking = useCallback(() => {
     setIsFollowingSelected(false);
@@ -268,8 +207,47 @@ function Index() {
     [resetSelectedTracking],
   );
 
+  const handleSelect = useCallback(
+    (id: string | null) => {
+      setSelectedId(id);
+      setIsFlightPanelMinimized(false);
+
+      if (id) {
+        setIsSelectedPathVisible(true);
+        setIsFollowingSelected(true);
+        setIsPanelOpen(true);
+        return;
+      }
+
+      resetSelectedTracking();
+      setIsPanelOpen(false);
+    },
+    [resetSelectedTracking],
+  );
+
   const handleSelectCountry = useCallback((country: string) => {
     setSelectedCountry(country);
+    setFocusKey((key) => key + 1);
+    setFlightFilters((filters) => ({
+      ...filters,
+      country: country === "Global" ? "all" : country,
+    }));
+  }, []);
+
+  const handleFiltersChange = useCallback((update: SetStateAction<FlightFilters>) => {
+    setFlightFilters((prev) => {
+      const next = typeof update === "function" ? update(prev) : update;
+      if (next.country !== prev.country) {
+        setSelectedCountry(next.country === "all" ? "Global" : next.country);
+        setFocusKey((key) => key + 1);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClearFilters = useCallback(() => {
+    setFlightFilters(DEFAULT_FLIGHT_FILTERS);
+    setSelectedCountry("Global");
     setFocusKey((key) => key + 1);
   }, []);
 
@@ -362,22 +340,6 @@ function Index() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [refresh, resetSelectedTracking]);
 
-  useEffect(() => {
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null;
-    const nextTheme: ThemeMode = stored === "light" || stored === "dark" ? stored : "dark";
-    setTheme(nextTheme);
-    setThemeReady(true);
-    document.documentElement.dataset.theme = nextTheme;
-    document.documentElement.classList.toggle("dark", nextTheme === "dark");
-  }, []);
-
-  useEffect(() => {
-    if (!themeReady) return;
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme, themeReady]);
-
   const currentAnomalousMap = useMemo(() => {
     const map = new Map<string, AnomalousFlight>();
     for (const flight of currentAnomalies) map.set(flight.icao24, flight);
@@ -417,6 +379,7 @@ function Index() {
     firstSeen?.lon ?? selectedFlight?.longitude ?? null,
   );
   const flightTrack = useFlightTrack(selectedId, Boolean(selectedId));
+  const selectedLiveTrail = useSelectedLiveTrail(selectedFlight);
   const displayFlightTrack = useMemo(
     () => mergeDisplayTrack(flightTrack.data, selectedLiveTrail, selectedId),
     [flightTrack.data, selectedId, selectedLiveTrail],
@@ -428,95 +391,6 @@ function Index() {
         ? "live log"
         : "local log"
     : null;
-
-  useEffect(() => {
-    if (!selectedFlight) {
-      selectedTrailIdRef.current = null;
-      setSelectedLiveTrail([]);
-      return;
-    }
-
-    const point = flightToTrackPoint(selectedFlight);
-    if (!point) return;
-
-    setSelectedLiveTrail((current) => {
-      if (selectedTrailIdRef.current !== selectedFlight.icao24) {
-        selectedTrailIdRef.current = selectedFlight.icao24;
-        return [point];
-      }
-
-      const last = current[current.length - 1];
-      if (last) {
-        const newer = trackPointTimeMs(point) > trackPointTimeMs(last);
-        const movedEnough = trackDistanceKm(last, point) >= MIN_TRAIL_DISTANCE_KM;
-        if (!newer || !movedEnough) return current;
-      }
-
-      return [...current, point].slice(-SELECTED_TRAIL_MAX_POINTS);
-    });
-  }, [
-    selectedFlight?.baro_altitude,
-    selectedFlight?.geo_altitude,
-    selectedFlight?.icao24,
-    selectedFlight?.last_contact,
-    selectedFlight?.latitude,
-    selectedFlight?.longitude,
-    selectedFlight?.on_ground,
-    selectedFlight?.time_position,
-    selectedFlight?.true_track,
-    selectedFlight?.velocity,
-    selectedFlight,
-  ]);
-
-  useEffect(() => {
-    const now = Date.now();
-    const incoming: EmergencyToast[] = [];
-
-    for (const flight of flights) {
-      const squawk = flight.squawk;
-      if (!squawk || !EMERGENCY_SQUAWKS.has(squawk)) continue;
-
-      const key = `${flight.icao24}:${squawk}`;
-      const seenAt = seenEmergencyRef.current.get(key);
-      if (seenAt && now - seenAt < EMERGENCY_REPEAT_MS) continue;
-
-      seenEmergencyRef.current.set(key, now);
-      incoming.push({
-        key,
-        icao24: flight.icao24,
-        callsign: flight.callsign?.trim() || flight.icao24.toUpperCase(),
-        squawk,
-        label: emergencySquawkLabel(squawk),
-        detectedAt: now,
-      });
-    }
-
-    if (incoming.length > 0) {
-      // Persist to localStorage so refreshes don't re-trigger
-      try {
-        const entries = Array.from(seenEmergencyRef.current.entries());
-        window.localStorage.setItem(SQUAWK_STORAGE_KEY, JSON.stringify(entries));
-      } catch {
-        /* quota or private browsing */
-      }
-
-      setEmergencyToasts((current) =>
-        [
-          ...incoming,
-          ...current.filter((toast) => !incoming.some((item) => item.key === toast.key)),
-        ].slice(0, 4),
-      );
-    }
-  }, [flights, lastUpdated]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setEmergencyToasts((current) =>
-        current.filter((toast) => Date.now() - toast.detectedAt < EMERGENCY_TOAST_TTL_MS),
-      );
-    }, 1_000);
-    return () => window.clearInterval(id);
-  }, []);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -554,6 +428,14 @@ function Index() {
             }
           : null;
       }
+    }
+
+    if (selectedCountry === "Global") {
+      return {
+        lat: 20,
+        lng: 0,
+        id: `global-${focusKey}`,
+      };
     }
 
     const country = COUNTRIES.find((c) => c.name === selectedCountry);
@@ -599,7 +481,7 @@ function Index() {
       left: "auto",
       bottom: "24px",
       zIndex: 1200,
-      transition: "all 0.3s ease",
+      transition: "right 0.3s ease, transform 0.3s ease, opacity 0.3s ease",
     }),
     [isDashboardCollapsed],
   );
@@ -633,6 +515,9 @@ function Index() {
         satelliteStatus={satelliteCatalog.status}
         feedSource={feedSource}
         sourceCounts={sourceCounts}
+        sourceHealth={sourceHealth}
+        sourceConflictCount={sourceConflictCount}
+        degraded={degraded}
         staleCount={staleCount}
         maxAgeSeconds={maxAgeSeconds}
         filteredFlightCount={flightFilterResult.matched}
@@ -640,7 +525,7 @@ function Index() {
         selectedCountry={selectedCountry}
         onSelectCountry={handleSelectCountry}
         theme={theme}
-        onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+        onToggleTheme={toggleTheme}
         isDashboardCollapsed={isDashboardCollapsed}
       />
 
@@ -698,9 +583,7 @@ function Index() {
         <EmergencyAlertStack
           alerts={emergencyToasts}
           onSelect={handleSelect}
-          onDismiss={(key) =>
-            setEmergencyToasts((current) => current.filter((toast) => toast.key !== key))
-          }
+          onDismiss={dismissEmergencyToast}
         />
 
         {selectedFlight && isPanelOpen && !isFlightPanelMinimized ? (
@@ -797,14 +680,15 @@ function Index() {
           satelliteGroups={satelliteCatalog.groups}
           satelliteStatus={satelliteCatalog.status}
           satelliteErrorMessage={satelliteCatalog.errorMessage}
+          sourceHealth={sourceHealth}
           activeFilterLabels={flightFilterResult.activeFilterLabels}
           activeFilterCount={flightFilterResult.activeFilterCount}
           selectedId={selectedId}
           status={status}
           isLoading={isInitialLoading}
           onSelect={handleSelect}
-          onFiltersChange={setFlightFilters}
-          onClearFilters={() => setFlightFilters({ ...DEFAULT_FLIGHT_FILTERS })}
+          onFiltersChange={handleFiltersChange}
+          onClearFilters={handleClearFilters}
           isCollapsed={isDashboardCollapsed}
           onToggleCollapse={() => setIsDashboardCollapsed((v) => !v)}
         />

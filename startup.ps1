@@ -43,11 +43,16 @@ function Write-LocalBackendEnv {
         "CSRF_TRUSTED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
         "CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
         "ALLOW_IN_MEMORY_CHANNEL_LAYER=True",
+        "SKYWATCH_DEPLOYMENT_PROFILE=local",
+        "SKYWATCH_DEMO_MODE=False",
+        "DJANGO_ADMIN_URL_PATH=admin/",
         "OPENSKY_CLIENT_ID=",
         "OPENSKY_CLIENT_SECRET=",
         "OPENSKY_USERNAME=",
         "OPENSKY_PASSWORD=",
-        "LOG_LEVEL=INFO"
+        "LOG_LEVEL=INFO",
+        "METRICS_USER=skywatch",
+        "METRICS_PASSWORD=change-me"
     )
 
     if ($UseDocker) {
@@ -92,6 +97,17 @@ function Start-DockerServices {
 
 Write-Host "SkyWatch Live - Local Setup" -ForegroundColor $info
 
+Write-Step "Checking required tools"
+if (-not (Test-Command "npm")) {
+    Write-Host "Node.js/npm was not found. Install Node.js 22 or newer." -ForegroundColor $errorColor
+    exit 1
+}
+if (-not (Test-Command "python")) {
+    Write-Host "Python was not found. Install Python 3.11 or newer and add it to PATH." -ForegroundColor $errorColor
+    exit 1
+}
+Write-Host "npm and Python are available" -ForegroundColor $success
+
 Write-Step "Checking environment files"
 Push-Location $frontendPath
 try {
@@ -113,10 +129,6 @@ if (-not $NoDocker) {
 }
 
 Write-Step "Installing frontend dependencies"
-if (-not (Test-Command "npm")) {
-    Write-Host "Node.js/npm was not found. Install Node.js 22 or newer." -ForegroundColor $errorColor
-    exit 1
-}
 Push-Location $frontendPath
 try {
     npm install
@@ -126,11 +138,6 @@ try {
 }
 
 Write-Step "Installing backend dependencies"
-if (-not (Test-Command "python")) {
-    Write-Host "Python was not found. Install Python 3.11 or newer and add it to PATH." -ForegroundColor $errorColor
-    exit 1
-}
-
 Push-Location $backendPath
 try {
     if (-not (Test-Path -LiteralPath "venv")) {

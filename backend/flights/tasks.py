@@ -33,10 +33,46 @@ def _last_contact_value(state):
         return 0
 
 
+def _state_source(state):
+    source = state.get("data_source") if isinstance(state, dict) else None
+    return source or "unknown"
+
+
+def _position_delta_km(left, right):
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return None
+    lat1 = left.get("latitude")
+    lon1 = left.get("longitude")
+    lat2 = right.get("latitude")
+    lon2 = right.get("longitude")
+    if not all(isinstance(value, (int, float)) for value in (lat1, lon1, lat2, lon2)):
+        return None
+    return _haversine(lat1, lon1, lat2, lon2)
+
+
+def _merge_state_metadata(existing, candidate):
+    provenance = set(existing.get("source_provenance") or [_state_source(existing)])
+    provenance.add(_state_source(candidate))
+    conflicts = list(existing.get("source_conflicts") or [])
+    distance_km = _position_delta_km(existing, candidate)
+    last_contact_delta = abs(_last_contact_value(existing) - _last_contact_value(candidate))
+    if distance_km is not None and (distance_km > 8 or last_contact_delta > 45):
+        conflicts.append({
+            "existing_source": _state_source(existing),
+            "candidate_source": _state_source(candidate),
+            "distance_km": round(distance_km, 3),
+            "last_contact_delta_seconds": round(last_contact_delta, 1),
+        })
+    existing["source_provenance"] = sorted(provenance)
+    existing["source_conflicts"] = conflicts[-5:]
+    return existing
+
+
 def _merge_flight_states(opensky_states, supplemental_states):
     """Merge OpenSky and supplemental states, keeping newest last_contact per ICAO24."""
     merged_by_icao = {}
     opensky_icaos = set()
+    conflict_count = 0
 
     for state in opensky_states:
         if not isinstance(state, dict):
@@ -45,6 +81,8 @@ def _merge_flight_states(opensky_states, supplemental_states):
         if not icao24:
             continue
         state["icao24"] = icao24
+        state["source_provenance"] = state.get("source_provenance") or [_state_source(state)]
+        state["source_conflicts"] = state.get("source_conflicts") or []
         opensky_icaos.add(icao24)
         merged_by_icao[icao24] = state
 
@@ -56,16 +94,27 @@ def _merge_flight_states(opensky_states, supplemental_states):
             continue
         state["icao24"] = icao24
         existing = merged_by_icao.get(icao24)
-        if existing is None or _last_contact_value(state) > _last_contact_value(existing):
+        state["source_provenance"] = state.get("source_provenance") or [_state_source(state)]
+        state["source_conflicts"] = state.get("source_conflicts") or []
+        if existing is None:
             merged_by_icao[icao24] = state
+        else:
+            before = len(existing.get("source_conflicts") or [])
+            _merge_state_metadata(existing, state)
+            conflict_count += max(0, len(existing.get("source_conflicts") or []) - before)
+            if _last_contact_value(state) > _last_contact_value(existing):
+                state = _merge_state_metadata(state, existing)
+                merged_by_icao[icao24] = state
 
     net_new = sum(1 for icao24 in merged_by_icao if icao24 not in opensky_icaos)
-    return list(merged_by_icao.values()), net_new
+    return list(merged_by_icao.values()), net_new, conflict_count
 
 
 def _broadcast_to_flights(event_type, data):
     """Send an event to connected flight WebSocket clients."""
     try:
+        data = dict(data or {})
+        data.setdefault("sequence", _next_stream_sequence())
         channel_layer = get_channel_layer()
         if channel_layer is None:
             logger.warning("No Channels layer configured; skipped %s broadcast", event_type)
@@ -81,6 +130,20 @@ def _broadcast_to_flights(event_type, data):
     except Exception as exc:
         logger.warning("Failed to broadcast %s: %s", event_type, exc)
         return False
+
+
+def _next_stream_sequence():
+    try:
+        from django.core.cache import cache
+
+        key = "skywatch:stream:sequence"
+        try:
+            return cache.incr(key)
+        except ValueError:
+            cache.set(key, 1, timeout=None)
+            return 1
+    except Exception:
+        return int(time.time() * 1000)
 
 
 def _publish_current_flights(result):
@@ -102,6 +165,10 @@ def _publish_current_flights(result):
             "authenticated": result.get("authenticated", False),
             "source": "backend",
             "count": len(states),
+            "source_counts": result.get("source_counts", {}),
+            "source_health": result.get("source_health", {}),
+            "source_conflict_count": result.get("source_conflict_count", 0),
+            "degraded": result.get("degraded", False),
         },
     )
 
@@ -117,6 +184,11 @@ def _serialize_anomaly(event):
         "confidence_score": event.confidence_score,
         "ml_score": event.ml_score,
         "details": event.details,
+        "detector_type": event.detector_type,
+        "evidence": event.evidence,
+        "source_quality": event.source_quality,
+        "source": event.source,
+        "explanation": event.explanation,
         "detected_at": event.detected_at.isoformat(),
         "resolved_at": event.resolved_at.isoformat() if event.resolved_at else None,
         "is_active": event.is_active,
@@ -125,6 +197,20 @@ def _serialize_anomaly(event):
         "altitude": event.altitude,
         "velocity": event.velocity,
     }
+
+
+def _detector_type_for_anomaly(anomaly):
+    source = anomaly.get("source", "")
+    anomaly_type = anomaly.get("type", "")
+    if source == "custom_rule":
+        return "custom"
+    if anomaly_type == "ml_anomaly":
+        return "ml"
+    if source in {"advanced", "behavioral"} or anomaly_type in {"circling", "proximity", "trajectory_deviation", "behavioral"}:
+        return "statistical"
+    if anomaly.get("ml_score") is not None:
+        return "ensemble"
+    return "rule"
 
 
 def _publish_anomaly_alert(events):
@@ -150,13 +236,30 @@ def fetch_flight_states(self):
         fetch_airplanes_live_states,
     )
     from .services.cache import increment_api_calls
-    from .models import Aircraft, FlightState, FlightPosition
+    from .models import Aircraft, FlightState, FlightPosition, IngestionAudit
     from .metrics import active_flights_total, data_ingestion_latency_seconds
+    from .services.demo_data import build_demo_flight_payload
+    from .services.source_adapters import (
+        annotate_state_source_quality,
+        run_source_fetch,
+        source_health_payload,
+    )
 
     try:
         increment_api_calls()
-        result = fetch_all_states()
-        if result is None:
+        if getattr(settings, "SKYWATCH_DEMO_MODE", False):
+            result = build_demo_flight_payload()
+            run_source_fetch("demo", lambda: result, empty_value={"states": []})
+        else:
+            outcome = run_source_fetch(
+                "opensky",
+                fetch_all_states,
+                empty_value={"states": []},
+                required=True,
+                circuit_breaker_failures=2,
+            )
+            result = outcome.payload
+        if result is None or not isinstance(result, dict):
             logger.info("Skipped fetch (rate limited or too soon)")
             return {"status": "skipped"}
 
@@ -178,83 +281,56 @@ def fetch_flight_states(self):
         supplemental_states = []
 
         # ── ADS-B supplemental sources ──
-        if getattr(settings, "ADSBONE_ENABLED", True):
-            try:
-                adsb_one_states = fetch_adsb_one_states()
-                logger.info("ADSB-One returned %d aircraft", len(adsb_one_states))
-                supplemental_states.extend(adsb_one_states)
-            except Exception as exc:
-                logger.warning("ADSB-One supplemental fetch failed: %s", exc)
-        else:
-            logger.info("ADSB-One supplemental feed disabled")
-
-        if getattr(settings, "AIRPLANESLIVE_ENABLED", True):
-            try:
-                airplanes_live_states = fetch_airplanes_live_states()
-                logger.info("Airplanes.live returned %d aircraft", len(airplanes_live_states))
-                supplemental_states.extend(airplanes_live_states)
-            except Exception as exc:
-                logger.warning("Airplanes.live supplemental fetch failed: %s", exc)
-        else:
-            logger.info("Airplanes.live supplemental feed disabled")
-
-        if getattr(settings, "ADSBLOL_ENABLED", True):
-            try:
-                adsb_lol_states = fetch_adsb_lol_states()
-                logger.info("ADSB.lol returned %d aircraft", len(adsb_lol_states))
-                supplemental_states.extend(adsb_lol_states)
-            except Exception as exc:
-                logger.warning("ADSB.lol supplemental fetch failed: %s", exc)
-        else:
-            logger.info("ADSB.lol supplemental feed disabled")
+        if not getattr(settings, "SKYWATCH_DEMO_MODE", False):
+            source_specs = [
+                ("adsb_one", "ADSB-One", getattr(settings, "ADSBONE_ENABLED", True), fetch_adsb_one_states),
+                ("airplanes_live", "Airplanes.live", getattr(settings, "AIRPLANESLIVE_ENABLED", True), fetch_airplanes_live_states),
+                ("adsb_lol", "ADSB.lol", getattr(settings, "ADSBLOL_ENABLED", True), fetch_adsb_lol_states),
+            ]
+            for source_key, source_label, enabled, fetcher in source_specs:
+                outcome = run_source_fetch(source_key, fetcher, enabled=enabled, empty_value=[])
+                source_states = outcome.payload if isinstance(outcome.payload, list) else []
+                logger.info("%s returned %d aircraft (%s)", source_label, len(source_states), outcome.status)
+                supplemental_states.extend(source_states)
 
         # ── OGN / FLARM (gliders, small aircraft) ──
-        if getattr(settings, "OGN_ENABLED", True):
-            try:
-                from .services.ogn_client import fetch_ogn_states
-                ogn_states = fetch_ogn_states()
-                logger.info("OGN/FLARM returned %d aircraft", len(ogn_states))
-                supplemental_states.extend(ogn_states)
-            except Exception as exc:
-                logger.warning("OGN fetch failed: %s", exc)
+        if not getattr(settings, "SKYWATCH_DEMO_MODE", False):
+            from .services.faa_radar import fetch_faa_radar_states
+            from .services.ogn_client import fetch_ogn_states
+            from .services.satellite_adsb import fetch_satellite_adsb_states
+            from .services.uat_client import fetch_uat_states
+
+            specialty_specs = [
+                ("ogn", "OGN/FLARM", getattr(settings, "OGN_ENABLED", True), fetch_ogn_states),
+                ("faa_radar", "FAA/Mil radar", getattr(settings, "FAA_RADAR_ENABLED", True), fetch_faa_radar_states),
+                ("uat", "UAT", getattr(settings, "UAT_ENABLED", True), fetch_uat_states),
+                ("satellite", "Satellite ADS-B", getattr(settings, "SATELLITE_ADSB_ENABLED", True), fetch_satellite_adsb_states),
+            ]
+            for source_key, source_label, enabled, fetcher in specialty_specs:
+                outcome = run_source_fetch(source_key, fetcher, enabled=enabled, empty_value=[])
+                source_states = outcome.payload if isinstance(outcome.payload, list) else []
+                logger.info("%s returned %d aircraft (%s)", source_label, len(source_states), outcome.status)
+                supplemental_states.extend(source_states)
 
         # ── FAA / Military radar ──
-        if getattr(settings, "FAA_RADAR_ENABLED", True):
-            try:
-                from .services.faa_radar import fetch_faa_radar_states
-                radar_states = fetch_faa_radar_states()
-                logger.info("FAA/Mil radar returned %d aircraft", len(radar_states))
-                supplemental_states.extend(radar_states)
-            except Exception as exc:
-                logger.warning("FAA radar fetch failed: %s", exc)
+        # specialty sources are fetched through run_source_fetch above
 
         # ── UAT (978 MHz, US GA traffic) ──
-        if getattr(settings, "UAT_ENABLED", True):
-            try:
-                from .services.uat_client import fetch_uat_states
-                uat_states = fetch_uat_states()
-                logger.info("UAT returned %d aircraft", len(uat_states))
-                supplemental_states.extend(uat_states)
-            except Exception as exc:
-                logger.warning("UAT fetch failed: %s", exc)
+        # UAT is fetched through run_source_fetch above
 
         # ── Satellite ADS-B (oceanic) ──
-        if getattr(settings, "SATELLITE_ADSB_ENABLED", True):
-            try:
-                from .services.satellite_adsb import fetch_satellite_adsb_states
-                sat_states = fetch_satellite_adsb_states()
-                logger.info("Satellite ADS-B returned %d aircraft", len(sat_states))
-                supplemental_states.extend(sat_states)
-            except Exception as exc:
-                logger.warning("Satellite ADS-B fetch failed: %s", exc)
+        # Satellite ADS-B is fetched through run_source_fetch above
 
         if supplemental_states:
-            states, net_new = _merge_flight_states(states, supplemental_states)
+            states, net_new, conflict_count = _merge_flight_states(states, supplemental_states)
             result["states"] = states
         else:
             net_new = 0
+            conflict_count = 0
 
         logger.info("All supplemental sources added %d net new aircraft after dedup", net_new)
+        if conflict_count:
+            logger.info("Detected %d source conflicts during deduplication", conflict_count)
 
         # ── Aggregate source counts ──
         source_counts = {}
@@ -262,6 +338,14 @@ def fetch_flight_states(self):
             src = s.get("data_source") or "unknown"
             source_counts[src] = source_counts.get(src, 0) + 1
         result["source_counts"] = source_counts
+        health_payload = source_health_payload()
+        annotate_state_source_quality(states, health_payload)
+        result["source_health"] = health_payload
+        result["source_conflict_count"] = conflict_count
+        result["degraded"] = any(
+            item.get("status") not in {"ok", "disabled"}
+            for item in health_payload.values()
+        )
         logger.info("Source breakdown: %s", source_counts)
 
         now = timezone.now()
@@ -270,9 +354,17 @@ def fetch_flight_states(self):
         aircraft_updates = {}
         ingest_started = time.perf_counter()
 
+        from .services.aircraft_db import lookup_aircraft
+
         for s in states:
             icao24 = s["icao24"]
             ds = s.get("data_source") or ""
+
+            # Enrich flight state in the list with aircraft details for the frontend
+            info = lookup_aircraft(icao24)
+            if info:
+                s["aircraft_type"] = info.get("aircraft_type") or ""
+                s["registration"] = info.get("registration") or ""
 
             # Track aircraft
             aircraft_updates[icao24] = {
@@ -357,8 +449,25 @@ def fetch_flight_states(self):
         logger.info("Stored %d flight states from %d sources", len(bulk_states), len(source_counts))
         active_flights_total.set(len(states))
         data_ingestion_latency_seconds.observe(time.perf_counter() - ingest_started)
+        IngestionAudit.objects.create(
+            source="merged",
+            started_at=now,
+            finished_at=timezone.now(),
+            duration_ms=int((time.perf_counter() - ingest_started) * 1000),
+            status="ok",
+            aircraft_count=len(states),
+            normalized_count=len(bulk_states),
+            rejected_count=0,
+            metadata={"source_counts": source_counts, "conflict_count": conflict_count},
+        )
 
-        return {"status": "ok", "count": len(bulk_states), "sources": source_counts}
+        return {
+            "status": "ok",
+            "count": len(bulk_states),
+            "sources": source_counts,
+            "source_conflict_count": conflict_count,
+            "degraded": result["degraded"],
+        }
 
     except Exception as exc:
         logger.error("fetch_flight_states failed: %s", exc)
@@ -558,7 +667,15 @@ def run_anomaly_detection():
                     update_obj.combined_score = (
                         ((ml_score or 0) + (lstm_score or 0)) / 2 if lstm_score is not None else ml_score
                     )
+                    update_obj.detector_type = _detector_type_for_anomaly(anomaly)
                     update_obj.details = anomaly.get("details", existing_dict.get("details", {}))
+                    update_obj.evidence = anomaly.get("evidence", anomaly.get("details", {}))
+                    update_obj.source_quality = {
+                        "source": flight.get("data_source") or "unknown",
+                        "confidence_score": flight.get("source_confidence"),
+                        "provenance": flight.get("source_provenance", []),
+                        "conflicts": flight.get("source_conflicts", []),
+                    }
                     update_obj.explanation = anomaly.get("explanation", existing_dict.get("explanation", []))
                     anomalies_to_update.append(update_obj)
                 else:
@@ -573,6 +690,7 @@ def run_anomaly_detection():
                         anomaly_type=anomaly["type"],
                         severity=anomaly.get("severity", "medium"),
                         confidence_score=anomaly.get("confidence_score", 0),
+                        detector_type=_detector_type_for_anomaly(anomaly),
                         ml_score=anomaly.get("ml_score", ml_score),
                         isolation_score=ml_score,
                         lstm_score=lstm_score,
@@ -580,6 +698,13 @@ def run_anomaly_detection():
                         explanation=explanation,
                         source=anomaly.get("source", "detector"),
                         details=anomaly.get("details", {}),
+                        evidence=anomaly.get("evidence", anomaly.get("details", {})),
+                        source_quality={
+                            "source": flight.get("data_source") or "unknown",
+                            "confidence_score": flight.get("source_confidence"),
+                            "provenance": flight.get("source_provenance", []),
+                            "conflicts": flight.get("source_conflicts", []),
+                        },
                         detected_at=now,
                         latitude=flight.get("latitude"),
                         longitude=flight.get("longitude"),
@@ -605,7 +730,10 @@ def run_anomaly_detection():
                     "isolation_score",
                     "lstm_score",
                     "combined_score",
+                    "detector_type",
                     "details",
+                    "evidence",
+                    "source_quality",
                     "explanation",
                 ],
                 batch_size=1000,
@@ -760,7 +888,7 @@ def build_flight_routes():
             has_anomaly=Exists(active_anomaly_aircraft),
         )
         .order_by("-has_anomaly", "-last_seen")
-        .values_list("aircraft_id", flat=True)[:2000]
+        .values_list("aircraft_id", flat=True)[:10000]
     )
 
     routes_updated = 0
@@ -848,23 +976,28 @@ def build_flight_routes():
 @shared_task
 def cleanup_old_data():
     """Prune old flight states and resolved anomalies."""
-    from .models import FlightState, AnomalyEvent, SystemMetrics
+    from django.conf import settings
+    from .models import FlightState, FlightPosition, AnomalyEvent, SystemMetrics, IngestionAudit
 
-    cutoff_states = timezone.now() - timedelta(days=7)
-    cutoff_anomalies = timezone.now() - timedelta(days=30)
-    cutoff_metrics = timezone.now() - timedelta(days=14)
+    cutoff_states = timezone.now() - timedelta(days=getattr(settings, "FLIGHT_STATE_RETENTION_DAYS", 7))
+    cutoff_positions = timezone.now() - timedelta(days=getattr(settings, "FLIGHT_POSITION_RETENTION_DAYS", 7))
+    cutoff_anomalies = timezone.now() - timedelta(days=getattr(settings, "RESOLVED_ANOMALY_RETENTION_DAYS", 30))
+    cutoff_metrics = timezone.now() - timedelta(days=getattr(settings, "SYSTEM_METRICS_RETENTION_DAYS", 14))
+    cutoff_audits = timezone.now() - timedelta(days=14)
 
     deleted_states = FlightState.objects.filter(timestamp__lt=cutoff_states).delete()
+    deleted_positions = FlightPosition.objects.filter(timestamp__lt=cutoff_positions).delete()
     deleted_anomalies = AnomalyEvent.objects.filter(
         detected_at__lt=cutoff_anomalies, is_active=False
     ).delete()
     deleted_metrics = SystemMetrics.objects.filter(
         timestamp__lt=cutoff_metrics
     ).delete()
+    deleted_audits = IngestionAudit.objects.filter(started_at__lt=cutoff_audits).delete()
 
     logger.info(
-        "Cleanup: deleted %s states, %s anomalies, %s metrics",
-        deleted_states, deleted_anomalies, deleted_metrics,
+        "Cleanup: deleted %s states, %s positions, %s anomalies, %s metrics, %s audits",
+        deleted_states, deleted_positions, deleted_anomalies, deleted_metrics, deleted_audits,
     )
 
 
@@ -894,6 +1027,59 @@ def retrain_model():
         logger.info("Not enough data for retraining: %d samples", len(flight_dicts))
 
 
+@shared_task
+def retrain_lstm_model():
+    """Periodically retrain the optional LSTM sequence autoencoder if TensorFlow/Keras is installed."""
+    try:
+        import numpy as np
+        from tensorflow import keras
+    except Exception:
+        logger.info("TensorFlow/Keras is not installed; skipped LSTM auto-retraining.")
+        return {"status": "skipped", "reason": "no_tensorflow"}
+
+    from .models import FlightState
+    from ml.lstm import FEATURE_COUNT, SEQUENCE_LENGTH, build_sequence, model_path
+    
+    cutoff = timezone.now() - timedelta(days=14)
+    aircraft_ids = (
+        FlightState.objects.filter(timestamp__gte=cutoff, on_ground=False)
+        .values_list("aircraft_id", flat=True)
+        .distinct()[:500]
+    )
+
+    sequences = []
+    for aircraft_id in aircraft_ids:
+        states = list(
+            FlightState.objects.filter(aircraft_id=aircraft_id, timestamp__gte=cutoff)
+            .order_by("timestamp")
+            .only("baro_altitude", "geo_altitude", "velocity", "true_track", "vertical_rate")
+        )
+        for index in range(SEQUENCE_LENGTH, len(states) + 1, SEQUENCE_LENGTH):
+            sequences.append(build_sequence(states[index - SEQUENCE_LENGTH:index]))
+
+    if len(sequences) < 50:
+        logger.info("Not enough sequences for LSTM auto-retraining: %d", len(sequences))
+        return {"status": "skipped", "reason": "not_enough_sequences"}
+
+    x = np.asarray(sequences, dtype="float32")
+    model = keras.Sequential([
+        keras.layers.Input(shape=(SEQUENCE_LENGTH, FEATURE_COUNT)),
+        keras.layers.LSTM(16, return_sequences=False),
+        keras.layers.RepeatVector(SEQUENCE_LENGTH),
+        keras.layers.LSTM(16, return_sequences=True),
+        keras.layers.TimeDistributed(keras.layers.Dense(FEATURE_COUNT)),
+    ])
+    model.compile(optimizer="adam", loss="mse")
+    model.fit(x, x, epochs=3, batch_size=64, validation_split=0.1, verbose=0)
+
+    path = model_path()
+    from pathlib import Path
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    model.save(path)
+    logger.info("Successfully auto-retrained LSTM model on %d sequences and saved to %s", len(sequences), path)
+    return {"status": "ok", "sequences": len(sequences)}
+
+
 def _haversine(lat1, lon1, lat2, lon2):
     """Calculate distance in km between two coordinates."""
     import math
@@ -911,12 +1097,14 @@ def _haversine(lat1, lon1, lat2, lon2):
 
 @shared_task
 def enrich_aircraft_metadata():
-    """Backfill missing aircraft type/registration using local DB."""
-    from .models import Aircraft
+    """Backfill missing aircraft type/registration and flight origin/destination metadata."""
+    from .models import Aircraft, FlightState
     from .services.aircraft_db import lookup_aircraft
+    from .services.opensky import fetch_aircraft_flights
     from django.db.models import Q
+    import time
 
-    # Find aircraft missing metadata that have been seen recently
+    # 1. Backfill missing aircraft physical metadata (registration, type)
     recent_cutoff = timezone.now() - timedelta(hours=24)
     missing_metadata = Aircraft.objects.filter(
         Q(aircraft_type="") | Q(registration="")
@@ -940,9 +1128,65 @@ def enrich_aircraft_metadata():
             updated_count += 1
 
     if updated_count > 0:
-        logger.info("Enriched %d aircraft with metadata", updated_count)
+        logger.info("Enriched %d aircraft with physical metadata", updated_count)
 
-    return {"status": "ok", "updated": updated_count}
+    # 2. Backfill missing flight route origin/destination airports
+    route_enriched_count = 0
+    recent_states = FlightState.objects.filter(
+        timestamp__gte=timezone.now() - timedelta(hours=2),
+        origin_airport="",
+        destination_airport=""
+    ).only("aircraft_id", "timestamp").order_by("-timestamp")
+
+    if recent_states.exists():
+        # Get distinct active aircraft hexes that are missing route metadata
+        icao_hexes = list(dict.fromkeys([fs.aircraft_id for fs in recent_states]))
+        
+        # Pull cache lookup guards
+        from .services.cache import _get_json, _set_json
+        
+        # Query at most 2 distinct aircraft per execution of this background task (runs every 15s)
+        candidates = []
+        for icao24 in icao_hexes:
+            cache_key = f"opensky:route_lookup:{icao24}"
+            if _get_json(cache_key):
+                continue
+            candidates.append(icao24)
+            if len(candidates) >= 2:
+                break
+                
+        for icao24 in candidates:
+            # Set cache query guard for 15 minutes to avoid redundant API thrashing
+            cache_key = f"opensky:route_lookup:{icao24}"
+            _set_json(cache_key, True, 900)
+            
+            end_ts = int(time.time())
+            begin_ts = end_ts - 2 * 3600
+            
+            flights = fetch_aircraft_flights(icao24, begin_ts, end_ts)
+            if flights:
+                # Retrieve the latest flight record
+                latest_flight = flights[-1]
+                origin = latest_flight.get("estDepartureAirport") or ""
+                destination = latest_flight.get("estArrivalAirport") or ""
+                
+                if origin or destination:
+                    updated = FlightState.objects.filter(
+                        aircraft_id=icao24,
+                        timestamp__gte=timezone.now() - timedelta(hours=2),
+                        origin_airport="",
+                        destination_airport=""
+                    ).update(origin_airport=origin, destination_airport=destination)
+                    route_enriched_count += updated
+
+        if route_enriched_count > 0:
+            logger.info("Enriched %d flight states with origin/destination airports", route_enriched_count)
+
+    return {
+        "status": "ok",
+        "updated_aircraft": updated_count,
+        "updated_routes": route_enriched_count
+    }
 
 
 @shared_task
@@ -1076,9 +1320,17 @@ def evaluate_custom_alert_rules():
                 anomaly_type="custom_rule",
                 severity="medium",
                 confidence_score=90.0,
+                detector_type="custom",
                 source="custom_rule",
                 alert_rule=rule,
                 details=details,
+                evidence={"rule": rule.name, "config": config, "observed": details.get("observed")},
+                source_quality={
+                    "source": flight.get("data_source") or "unknown",
+                    "confidence_score": flight.get("source_confidence"),
+                    "provenance": flight.get("source_provenance", []),
+                    "conflicts": flight.get("source_conflicts", []),
+                },
                 explanation=[{
                     "factor": rule.name,
                     "value": details.get("observed"),
