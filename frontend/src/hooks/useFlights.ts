@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useCallback, useReducer } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Flight } from "@/lib/opensky";
 import {
@@ -31,6 +31,24 @@ const configuredApiBase = (
 ).replace(/\/+$/, "");
 
 const configuredWsUrl = import.meta.env.VITE_SKYWATCH_WS_URL || "";
+const configuredDemoMode = import.meta.env.VITE_SKYWATCH_DEMO_MODE === "true";
+
+export interface SourceHealth {
+  status?: string;
+  enabled?: boolean;
+  confidence_score?: number;
+  last_success_at?: string | null;
+  last_error_at?: string | null;
+  last_error?: string;
+  consecutive_failures?: number;
+  rate_limited_until?: string | null;
+  circuit_open_until?: string | null;
+  latency_ms?: number;
+  aircraft_count?: number;
+  normalized_count?: number;
+  rejected_count?: number;
+  updated_at?: string | null;
+}
 
 interface FlightsResponse {
   time: number;
@@ -42,6 +60,9 @@ interface FlightsResponse {
   max_age_seconds?: number;
   stale_count?: number;
   source_counts?: Record<string, number>;
+  source_health?: Record<string, SourceHealth>;
+  source_conflict_count?: number;
+  degraded?: boolean;
 }
 
 interface FlightUpdatePayload {
@@ -51,6 +72,10 @@ interface FlightUpdatePayload {
   authenticated?: boolean;
   source?: string;
   source_counts?: Record<string, number>;
+  source_health?: Record<string, SourceHealth>;
+  source_conflict_count?: number;
+  degraded?: boolean;
+  sequence?: number;
 }
 
 interface BackendAnomaly {
@@ -98,7 +123,92 @@ interface WebSocketMessage {
   data?: FlightUpdatePayload | AnomalyAlertPayload;
 }
 
+type AnomalyHistoryEntry = {
+  time: number;
+  altitude: number | null;
+  speed: number | null;
+  heading: number | null;
+};
+
+interface FlightsState {
+  flights: Flight[];
+  currentAnomalies: AnomalousFlight[];
+  anomalies: AnomalousFlight[];
+  anomalyHistory: Record<string, AnomalyHistoryEntry[]>;
+  lastUpdated: number | null;
+  feedSource: string | null;
+  sourceCounts: Record<string, number>;
+  sourceHealth: Record<string, SourceHealth>;
+  sourceConflictCount: number;
+  degraded: boolean;
+  staleCount: number;
+  maxAgeSeconds: number | null;
+  status: Status;
+  isFetching: boolean;
+  errorMessage: string | null;
+  authenticated: boolean | null;
+  reconnectAttempt: number;
+  connectionLost: boolean;
+  lastSequence: number | null;
+}
+
+type FlightsAction =
+  | { type: "fetch_started"; hasSnapshot: boolean }
+  | { type: "fetch_finished" }
+  | { type: "fetch_failed"; message: string }
+  | {
+      type: "snapshot_applied";
+      flights: Flight[];
+      currentAnomalies: AnomalousFlight[];
+      freshAnomalies: AnomalousFlight[];
+      updatedAt: number;
+      metadata: {
+        authenticated?: boolean;
+        source?: string;
+        staleCount?: number;
+        maxAgeSeconds?: number;
+        sourceCounts?: Record<string, number>;
+        sourceHealth?: Record<string, SourceHealth>;
+        sourceConflictCount?: number;
+        degraded?: boolean;
+        sequence?: number;
+      };
+    }
+  | { type: "ws_open"; hasSnapshot: boolean }
+  | { type: "ws_initial_error"; message: string }
+  | { type: "ws_reconnecting"; attempt: number; hasSnapshot: boolean }
+  | { type: "ws_lost"; hasSnapshot: boolean }
+  | { type: "flight_patch"; flight: Flight }
+  | {
+      type: "anomaly_alerts_merged";
+      anomalies: AnomalousFlight[];
+      freshAnomalies: AnomalousFlight[];
+    };
+
+const INITIAL_FLIGHTS_STATE: FlightsState = {
+  flights: [],
+  currentAnomalies: [],
+  anomalies: [],
+  anomalyHistory: {},
+  lastUpdated: null,
+  feedSource: null,
+  sourceCounts: {},
+  sourceHealth: {},
+  sourceConflictCount: 0,
+  degraded: false,
+  staleCount: 0,
+  maxAgeSeconds: null,
+  status: "idle",
+  isFetching: false,
+  errorMessage: null,
+  authenticated: null,
+  reconnectAttempt: 0,
+  connectionLost: false,
+  lastSequence: null,
+};
+
 function getFlightsRestUrls(): string[] {
+  if (configuredDemoMode) return ["/api/flights?demo=1"];
   if (!configuredApiBase) return ["/api/flights"];
 
   let backendUrl: string;
@@ -207,11 +317,74 @@ function hasFlightRows(payload: FlightsResponse): boolean {
   return Array.isArray(rows) && rows.length > 0;
 }
 
-function normalizeFlights(flights: Flight[] | undefined): Flight[] {
+function samePredictedPath(a: Flight["predicted_path"], b: Flight["predicted_path"]): boolean {
+  if (a === b) return true;
+  const left = Array.isArray(a) ? a : [];
+  const right = Array.isArray(b) ? b : [];
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const l = left[index];
+    const r = right[index];
+    if (
+      l.lat !== r.lat ||
+      l.lon !== r.lon ||
+      l.alt !== r.alt ||
+      l.timestamp !== r.timestamp ||
+      l.minutes_ahead !== r.minutes_ahead ||
+      l.confidence !== r.confidence
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameSensors(a: Flight["sensors"], b: Flight["sensors"]): boolean {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function sameFlightSnapshot(a: Flight, b: Flight): boolean {
+  return (
+    a.icao24 === b.icao24 &&
+    a.callsign === b.callsign &&
+    a.origin_country === b.origin_country &&
+    a.time_position === b.time_position &&
+    a.last_contact === b.last_contact &&
+    a.longitude === b.longitude &&
+    a.latitude === b.latitude &&
+    a.baro_altitude === b.baro_altitude &&
+    a.on_ground === b.on_ground &&
+    a.velocity === b.velocity &&
+    a.true_track === b.true_track &&
+    a.vertical_rate === b.vertical_rate &&
+    sameSensors(a.sensors, b.sensors) &&
+    a.geo_altitude === b.geo_altitude &&
+    a.squawk === b.squawk &&
+    a.spi === b.spi &&
+    a.position_source === b.position_source &&
+    a.category === b.category &&
+    a.data_source === b.data_source &&
+    a.source_confidence === b.source_confidence &&
+    JSON.stringify(a.source_provenance ?? []) === JSON.stringify(b.source_provenance ?? []) &&
+    JSON.stringify(a.source_conflicts ?? []) === JSON.stringify(b.source_conflicts ?? []) &&
+    a.ml_anomaly_score === b.ml_anomaly_score &&
+    a.prediction_confidence === b.prediction_confidence &&
+    samePredictedPath(a.predicted_path, b.predicted_path)
+  );
+}
+
+function normalizeFlights(
+  flights: Flight[] | undefined,
+  previousById: Map<string, Flight> = new Map(),
+  previousList: Flight[] = [],
+): Flight[] {
   if (!Array.isArray(flights)) return [];
 
   const nowSeconds = Date.now() / 1000;
-  return flights
+  const normalized = flights
     .filter((flight) => {
       if (!flight) return false;
       const icao24 = normalizeIcao24(flight.icao24);
@@ -234,28 +407,50 @@ function normalizeFlights(flights: Flight[] | undefined): Flight[] {
         fixAgeSeconds <= MAX_POSITION_AGE_SECONDS
       );
     })
-    .map((flight) => ({
-      ...flight,
-      icao24: normalizeIcao24(flight.icao24) ?? flight.icao24.toLowerCase(),
-      callsign: flight.callsign ? flight.callsign.trim() || null : null,
-      origin_country: flight.origin_country || "",
-      time_position: flight.time_position ?? null,
-      last_contact: flight.last_contact ?? Date.now() / 1000,
-      baro_altitude: flight.baro_altitude ?? null,
-      velocity: flight.velocity ?? null,
-      true_track: flight.true_track ?? null,
-      vertical_rate: flight.vertical_rate ?? null,
-      sensors: flight.sensors ?? null,
-      geo_altitude: flight.geo_altitude ?? null,
-      squawk: flight.squawk ?? null,
-      spi: Boolean(flight.spi),
-      position_source: flight.position_source ?? 0,
-      category: flight.category ?? 0,
-      data_source: inferDataSource(flight.data_source, flight.position_source),
-      predicted_path: Array.isArray(flight.predicted_path) ? flight.predicted_path : [],
-      prediction_confidence:
-        typeof flight.prediction_confidence === "number" ? flight.prediction_confidence : 0,
-    }));
+    .map((flight) => {
+      const icao24 = normalizeIcao24(flight.icao24) ?? flight.icao24.toLowerCase();
+      const candidate: Flight = {
+        ...flight,
+        icao24,
+        callsign: flight.callsign ? flight.callsign.trim() || null : null,
+        origin_country: flight.origin_country || "",
+        time_position: flight.time_position ?? null,
+        last_contact: flight.last_contact ?? nowSeconds,
+        baro_altitude: flight.baro_altitude ?? null,
+        velocity: flight.velocity ?? null,
+        true_track: flight.true_track ?? null,
+        vertical_rate: flight.vertical_rate ?? null,
+        sensors: flight.sensors ?? null,
+        geo_altitude: flight.geo_altitude ?? null,
+        squawk: flight.squawk ?? null,
+        spi: Boolean(flight.spi),
+        position_source: flight.position_source ?? 0,
+        category: flight.category ?? 0,
+        data_source: inferDataSource(flight.data_source, flight.position_source),
+        source_confidence:
+          typeof flight.source_confidence === "number" ? flight.source_confidence : undefined,
+        source_provenance: Array.isArray(flight.source_provenance)
+          ? flight.source_provenance
+          : undefined,
+        source_conflicts: Array.isArray(flight.source_conflicts)
+          ? flight.source_conflicts
+          : undefined,
+        predicted_path: Array.isArray(flight.predicted_path) ? flight.predicted_path : [],
+        prediction_confidence:
+          typeof flight.prediction_confidence === "number" ? flight.prediction_confidence : 0,
+      };
+      const previous = previousById.get(icao24);
+      return previous && sameFlightSnapshot(previous, candidate) ? previous : candidate;
+    });
+
+  if (
+    previousList.length === normalized.length &&
+    normalized.every((flight, index) => flight === previousList[index])
+  ) {
+    return previousList;
+  }
+
+  return normalized;
 }
 
 function anomalyKey(flight: AnomalousFlight): string {
@@ -276,6 +471,185 @@ function pruneSeen(seen: Map<string, number>, now: number) {
   const overflow = seen.size - MAX_SEEN_ANOMALIES;
   const oldest = [...seen.entries()].sort((a, b) => a[1] - b[1]).slice(0, overflow);
   for (const [key] of oldest) seen.delete(key);
+}
+
+function collectFreshAnomalies(
+  seen: Map<string, number>,
+  flagged: AnomalousFlight[],
+): AnomalousFlight[] {
+  const now = Date.now();
+  pruneSeen(seen, now);
+
+  const fresh: AnomalousFlight[] = [];
+  for (const anomaly of flagged) {
+    const key = anomalyKey(anomaly);
+    if (!seen.has(key)) fresh.push(anomaly);
+    seen.set(key, now);
+  }
+  return fresh;
+}
+
+function prependAnomalies(current: AnomalousFlight[], fresh: AnomalousFlight[]): AnomalousFlight[] {
+  return fresh.length > 0 ? [...fresh, ...current].slice(0, MAX_HISTORY) : current;
+}
+
+function updateAnomalyHistory(
+  current: Record<string, AnomalyHistoryEntry[]>,
+  flagged: AnomalousFlight[],
+  updatedAt: number,
+): Record<string, AnomalyHistoryEntry[]> {
+  if (flagged.length === 0) return current;
+
+  let changed = false;
+  const next = { ...current };
+  const timestamp = Math.floor(updatedAt / 1000);
+
+  for (const flight of flagged) {
+    const entries = next[flight.icao24] ?? [];
+    const last = entries[entries.length - 1];
+    const altitude = flight.baro_altitude ?? flight.geo_altitude ?? null;
+    const speed = flight.velocity ?? null;
+    const heading = flight.true_track ?? null;
+    const sameSecond = !!last && last.time === timestamp;
+    const sameValues =
+      !!last && last.altitude === altitude && last.speed === speed && last.heading === heading;
+
+    if (sameSecond && sameValues) continue;
+
+    next[flight.icao24] = [...entries, { time: timestamp, altitude, speed, heading }].slice(-200);
+    changed = true;
+  }
+
+  return changed ? next : current;
+}
+
+function mergeCurrentAnomalies(
+  current: AnomalousFlight[],
+  incoming: AnomalousFlight[],
+): AnomalousFlight[] {
+  if (incoming.length === 0) return current;
+
+  const next = [...current];
+  for (const anomaly of incoming) {
+    const index = next.findIndex((item) => item.icao24 === anomaly.icao24);
+    if (index >= 0) {
+      const existing = next[index];
+      const mergedAnomalies = [...existing.anomalies];
+      for (const item of anomaly.anomalies) {
+        if (!mergedAnomalies.some((existingItem) => existingItem.type === item.type)) {
+          mergedAnomalies.push(item);
+        }
+      }
+      next[index] = {
+        ...existing,
+        ...anomaly,
+        anomalies: mergedAnomalies,
+        detectedAt: Math.max(existing.detectedAt, anomaly.detectedAt),
+      };
+    } else {
+      next.unshift(anomaly);
+    }
+  }
+  return next;
+}
+
+function flightsReducer(state: FlightsState, action: FlightsAction): FlightsState {
+  switch (action.type) {
+    case "fetch_started":
+      return {
+        ...state,
+        isFetching: true,
+        status: action.hasSnapshot
+          ? state.status === "error"
+            ? "reconnecting"
+            : state.status
+          : "loading",
+      };
+    case "fetch_finished":
+      return state.isFetching ? { ...state, isFetching: false } : state;
+    case "fetch_failed":
+      return {
+        ...state,
+        isFetching: false,
+        errorMessage: action.message,
+        status: state.lastUpdated || state.status === "live" ? "reconnecting" : "error",
+      };
+    case "snapshot_applied": {
+      const hasSourceCounts =
+        action.metadata.sourceCounts && Object.keys(action.metadata.sourceCounts).length > 0;
+      return {
+        ...state,
+        flights: action.flights,
+        currentAnomalies: action.currentAnomalies,
+        anomalies: prependAnomalies(state.anomalies, action.freshAnomalies),
+        anomalyHistory: updateAnomalyHistory(
+          state.anomalyHistory,
+          action.currentAnomalies,
+          action.updatedAt,
+        ),
+        lastUpdated: action.updatedAt,
+        authenticated:
+          typeof action.metadata.authenticated === "boolean"
+            ? action.metadata.authenticated
+            : state.authenticated,
+        feedSource: action.metadata.source ?? null,
+        sourceCounts: hasSourceCounts
+          ? (action.metadata.sourceCounts as Record<string, number>)
+          : state.sourceCounts,
+        sourceHealth: action.metadata.sourceHealth ?? state.sourceHealth,
+        sourceConflictCount: action.metadata.sourceConflictCount ?? state.sourceConflictCount,
+        degraded: action.metadata.degraded ?? false,
+        staleCount: action.metadata.staleCount ?? 0,
+        maxAgeSeconds:
+          typeof action.metadata.maxAgeSeconds === "number" &&
+          Number.isFinite(action.metadata.maxAgeSeconds)
+            ? action.metadata.maxAgeSeconds
+            : null,
+        errorMessage: null,
+        status: "live",
+        connectionLost: false,
+        lastSequence: action.metadata.sequence ?? state.lastSequence,
+      };
+    }
+    case "ws_open":
+      return {
+        ...state,
+        reconnectAttempt: 0,
+        connectionLost: false,
+        errorMessage: null,
+        status: action.hasSnapshot ? "live" : "loading",
+      };
+    case "ws_initial_error":
+      return state.lastUpdated ? state : { ...state, errorMessage: action.message };
+    case "ws_reconnecting":
+      return {
+        ...state,
+        reconnectAttempt: action.attempt,
+        status: action.hasSnapshot ? "live" : "error",
+      };
+    case "ws_lost":
+      return {
+        ...state,
+        connectionLost: true,
+        status: action.hasSnapshot ? "live" : "error",
+        errorMessage: action.hasSnapshot ? null : "Connection lost",
+      };
+    case "flight_patch": {
+      const index = state.flights.findIndex((flight) => flight.icao24 === action.flight.icao24);
+      if (index < 0) return state;
+      const nextFlights = [...state.flights];
+      nextFlights[index] = { ...nextFlights[index], ...action.flight };
+      return { ...state, flights: nextFlights };
+    }
+    case "anomaly_alerts_merged":
+      return {
+        ...state,
+        currentAnomalies: mergeCurrentAnomalies(state.currentAnomalies, action.anomalies),
+        anomalies: prependAnomalies(state.anomalies, action.freshAnomalies),
+      };
+    default:
+      return state;
+  }
 }
 
 function isAnomalyAlertPayload(
@@ -304,31 +678,28 @@ const FIRST_SEEN_MISS_LIMIT = 20;
 
 export function useFlights() {
   const queryClient = useQueryClient();
-  const [flights, setFlights] = useState<Flight[]>([]);
-  const [currentAnomalies, setCurrentAnomalies] = useState<AnomalousFlight[]>([]);
-  const [anomalies, setAnomalies] = useState<AnomalousFlight[]>([]);
-  const [anomalyHistory, setAnomalyHistory] = useState<
-    Record<
-      string,
-      Array<{
-        time: number;
-        altitude: number | null;
-        speed: number | null;
-        heading: number | null;
-      }>
-    >
-  >({});
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
-  const [feedSource, setFeedSource] = useState<string | null>(null);
-  const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
-  const [staleCount, setStaleCount] = useState(0);
-  const [maxAgeSeconds, setMaxAgeSeconds] = useState<number | null>(null);
-  const [status, setStatus] = useState<Status>("idle");
-  const [isFetching, setIsFetching] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const [connectionLost, setConnectionLost] = useState(false);
+  const [state, dispatch] = useReducer(flightsReducer, INITIAL_FLIGHTS_STATE);
+  const {
+    flights,
+    currentAnomalies,
+    anomalies,
+    anomalyHistory,
+    lastUpdated,
+    feedSource,
+    sourceCounts,
+    sourceHealth,
+    sourceConflictCount,
+    degraded,
+    staleCount,
+    maxAgeSeconds,
+    status,
+    isFetching,
+    errorMessage,
+    authenticated,
+    reconnectAttempt,
+    connectionLost,
+    lastSequence,
+  } = state;
   const seenRef = useRef<Map<string, number>>(new Map());
   const firstSeenRef = useRef<Map<string, FirstSeenPosition>>(new Map());
   const inFlightRef = useRef(false);
@@ -337,25 +708,15 @@ export function useFlights() {
   const reconnectTimerRef = useRef<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const flightsRef = useRef<Flight[]>([]);
+  const flightsByIdRef = useRef<Map<string, Flight>>(new Map());
+  const lastSequenceRef = useRef<number | null>(null);
   useEffect(() => {
     flightsRef.current = flights;
+    flightsByIdRef.current = new Map(flights.map((flight) => [flight.icao24, flight]));
   }, [flights]);
-
-  const rememberAnomalies = useCallback((flagged: AnomalousFlight[]) => {
-    const now = Date.now();
-    pruneSeen(seenRef.current, now);
-
-    const fresh: AnomalousFlight[] = [];
-    for (const anomaly of flagged) {
-      const key = anomalyKey(anomaly);
-      if (!seenRef.current.has(key)) fresh.push(anomaly);
-      seenRef.current.set(key, now);
-    }
-
-    if (fresh.length > 0) {
-      setAnomalies((prev) => [...fresh, ...prev].slice(0, MAX_HISTORY));
-    }
-  }, []);
+  useEffect(() => {
+    lastSequenceRef.current = lastSequence;
+  }, [lastSequence]);
 
   const applyFlightSnapshot = useCallback(
     (
@@ -368,9 +729,13 @@ export function useFlights() {
         maxAgeSeconds?: number;
         backendAnomalies?: BackendAnomaly[];
         sourceCounts?: Record<string, number>;
+        sourceHealth?: Record<string, SourceHealth>;
+        sourceConflictCount?: number;
+        degraded?: boolean;
+        sequence?: number;
       } = {},
     ) => {
-      const normalized = normalizeFlights(nextFlights);
+      const normalized = normalizeFlights(nextFlights, flightsByIdRef.current, flightsRef.current);
       const updatedAt =
         typeof metadata.time === "number" && metadata.time > 0 ? metadata.time * 1000 : Date.now();
       const previousUpdatedAt = lastUpdatedRef.current;
@@ -379,7 +744,6 @@ export function useFlights() {
         return;
       }
 
-      setFlights(normalized);
       queryClient.setQueryData(["flights"], {
         time: metadata.time ?? Math.floor(Date.now() / 1000),
         flights: normalized,
@@ -479,64 +843,21 @@ export function useFlights() {
       }
 
       const flagged = Array.from(mergedAnomaliesMap.values());
-      setCurrentAnomalies(flagged);
-      rememberAnomalies(flagged);
-
-      setAnomalyHistory((prev) => {
-        const next = { ...prev };
-        const tMs = updatedAt;
-        const t = Math.floor(tMs / 1000);
-        for (const f of flagged) {
-          if (!next[f.icao24]) next[f.icao24] = [];
-          const last = next[f.icao24][next[f.icao24].length - 1];
-          // Store the actual snapshot time (seconds), not a generalized bucket.
-          // Only dedupe if the last entry has the exact same second AND the values are unchanged.
-          const sameSecond = !!last && last.time === t;
-          const sameValues =
-            !!last &&
-            last.altitude === (f.baro_altitude ?? f.geo_altitude ?? null) &&
-            last.speed === (f.velocity ?? null) &&
-            last.heading === (f.true_track ?? null);
-
-          if (!sameSecond || !sameValues) {
-            next[f.icao24] = [
-              ...next[f.icao24],
-              {
-                time: t,
-                altitude: f.baro_altitude ?? f.geo_altitude ?? null,
-                speed: f.velocity ?? null,
-                heading: f.true_track ?? null,
-              },
-            ];
-
-            if (next[f.icao24].length > 200) {
-              next[f.icao24] = next[f.icao24].slice(-200);
-            }
-          }
-        }
-        return next;
-      });
+      const freshAnomalies = collectFreshAnomalies(seenRef.current, flagged);
 
       lastUpdatedRef.current = updatedAt;
-      setLastUpdated(updatedAt);
-
-      if (typeof metadata.authenticated === "boolean") {
-        setAuthenticated(metadata.authenticated);
-      }
-      setFeedSource(metadata.source ?? null);
-      if (metadata.sourceCounts && Object.keys(metadata.sourceCounts).length > 0) {
-        setSourceCounts(metadata.sourceCounts);
-      }
-      setStaleCount(metadata.staleCount ?? 0);
-      setMaxAgeSeconds(
-        typeof metadata.maxAgeSeconds === "number" && Number.isFinite(metadata.maxAgeSeconds)
-          ? metadata.maxAgeSeconds
-          : null,
-      );
-      setErrorMessage(null);
-      setStatus("live");
+      flightsRef.current = normalized;
+      flightsByIdRef.current = new Map(normalized.map((flight) => [flight.icao24, flight]));
+      dispatch({
+        type: "snapshot_applied",
+        flights: normalized,
+        currentAnomalies: flagged,
+        freshAnomalies,
+        updatedAt,
+        metadata,
+      });
     },
-    [queryClient, rememberAnomalies],
+    [queryClient],
   );
 
   const fetchOnce = useCallback(async () => {
@@ -544,11 +865,7 @@ export function useFlights() {
     inFlightRef.current = true;
     const controller = new AbortController();
     fetchAbortRef.current = controller;
-    setIsFetching(true);
-    setStatus((current) => {
-      if (!lastUpdatedRef.current) return "loading";
-      return current === "error" ? "reconnecting" : current;
-    });
+    dispatch({ type: "fetch_started", hasSnapshot: Boolean(lastUpdatedRef.current) });
 
     try {
       let data: FlightsResponse | null = null;
@@ -602,20 +919,22 @@ export function useFlights() {
         maxAgeSeconds: data.max_age_seconds,
         backendAnomalies,
         sourceCounts: data.source_counts,
+        sourceHealth: data.source_health,
+        sourceConflictCount: data.source_conflict_count,
+        degraded: data.degraded,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Flight feed unavailable";
-      setErrorMessage(controller.signal.aborted ? "Flight feed timed out" : message);
-      setStatus((current) => {
-        if (lastUpdatedRef.current || current === "live") return "reconnecting";
-        return "error";
+      dispatch({
+        type: "fetch_failed",
+        message: controller.signal.aborted ? "Flight feed timed out" : message,
       });
     } finally {
       if (fetchAbortRef.current === controller) {
         fetchAbortRef.current = null;
       }
       inFlightRef.current = false;
-      setIsFetching(false);
+      dispatch({ type: "fetch_finished" });
     }
   }, [applyFlightSnapshot]);
 
@@ -645,23 +964,27 @@ export function useFlights() {
 
       ws.onopen = () => {
         reconnectAttempt = 0;
-        setReconnectAttempt(0);
-        setConnectionLost(false);
-        setErrorMessage(null);
-        setStatus(lastUpdatedRef.current ? "live" : "loading");
+        dispatch({ type: "ws_open", hasSnapshot: Boolean(lastUpdatedRef.current) });
         ws.send(JSON.stringify({ type: "ping" }));
+        if (lastSequenceRef.current !== null) {
+          ws.send(JSON.stringify({ type: "resume", last_sequence: lastSequenceRef.current }));
+        }
       };
 
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data) as WebSocketMessage;
-          if (message.type === "flight_update") {
+          if (message.type === "flight_update" || message.type === "initial_snapshot") {
             const payload = isFlightUpdatePayload(message.data) ? message.data : {};
             applyFlightSnapshot(payload.flights ?? payload.states, {
               time: payload.time,
               authenticated: payload.authenticated,
               source: payload.source,
               sourceCounts: payload.source_counts,
+              sourceHealth: payload.source_health,
+              sourceConflictCount: payload.source_conflict_count,
+              degraded: payload.degraded,
+              sequence: payload.sequence,
             });
           } else if (message.type === "anomaly_alert") {
             try {
@@ -669,17 +992,13 @@ export function useFlights() {
               if (payload) {
                 if (payload.flight) {
                   // Legacy/development frontend-flagged format
-                  const updatedFlight = normalizeFlights([payload.flight])[0];
+                  const updatedFlight = normalizeFlights(
+                    [payload.flight],
+                    flightsByIdRef.current,
+                    flightsRef.current,
+                  )[0];
                   if (updatedFlight) {
-                    setFlights((prev) => {
-                      const idx = prev.findIndex((f) => f.icao24 === updatedFlight.icao24);
-                      if (idx >= 0) {
-                        const next = [...prev];
-                        next[idx] = { ...next[idx], ...updatedFlight };
-                        return next;
-                      }
-                      return prev;
-                    });
+                    dispatch({ type: "flight_patch", flight: updatedFlight });
 
                     if (payload.anomalies && Array.isArray(payload.anomalies)) {
                       const anomalousFlight: AnomalousFlight = {
@@ -687,11 +1006,11 @@ export function useFlights() {
                         anomalies: payload.anomalies as Anomaly[],
                         detectedAt: Date.now(),
                       };
-                      setCurrentAnomalies((prev) => {
-                        const filtered = prev.filter((a) => a.icao24 !== anomalousFlight.icao24);
-                        return [anomalousFlight, ...filtered];
+                      dispatch({
+                        type: "anomaly_alerts_merged",
+                        anomalies: [anomalousFlight],
+                        freshAnomalies: collectFreshAnomalies(seenRef.current, [anomalousFlight]),
                       });
-                      rememberAnomalies([anomalousFlight]);
                     }
                   }
                 } else if (Array.isArray(payload.anomalies)) {
@@ -713,11 +1032,12 @@ export function useFlights() {
                     };
 
                     if (existingFlight) {
-                      if (ea.ml_score !== null) {
-                        existingFlight.ml_anomaly_score = ea.ml_score;
-                      }
+                      const flightWithScore =
+                        ea.ml_score !== null
+                          ? { ...existingFlight, ml_anomaly_score: ea.ml_score }
+                          : existingFlight;
                       mappedAnomalies.push({
-                        ...existingFlight,
+                        ...flightWithScore,
                         anomalies: [anomalyItem],
                         detectedAt: new Date(ea.detected_at).getTime(),
                       });
@@ -751,31 +1071,11 @@ export function useFlights() {
                   }
 
                   if (mappedAnomalies.length > 0) {
-                    setCurrentAnomalies((prev) => {
-                      const next = [...prev];
-                      for (const ma of mappedAnomalies) {
-                        const idx = next.findIndex((a) => a.icao24 === ma.icao24);
-                        if (idx >= 0) {
-                          const existing = next[idx];
-                          const mergedAnom = [...existing.anomalies];
-                          for (const newA of ma.anomalies) {
-                            if (!mergedAnom.some((item) => item.type === newA.type)) {
-                              mergedAnom.push(newA);
-                            }
-                          }
-                          next[idx] = {
-                            ...existing,
-                            ...ma,
-                            anomalies: mergedAnom,
-                            detectedAt: Math.max(existing.detectedAt, ma.detectedAt),
-                          };
-                        } else {
-                          next.unshift(ma);
-                        }
-                      }
-                      return next;
+                    dispatch({
+                      type: "anomaly_alerts_merged",
+                      anomalies: mappedAnomalies,
+                      freshAnomalies: collectFreshAnomalies(seenRef.current, mappedAnomalies),
                     });
-                    rememberAnomalies(mappedAnomalies);
                   }
                 }
               }
@@ -790,26 +1090,25 @@ export function useFlights() {
 
       ws.onerror = () => {
         if (!lastUpdatedRef.current) {
-          setErrorMessage("Real-time flight stream unavailable");
+          dispatch({
+            type: "ws_initial_error",
+            message: "Real-time flight stream unavailable",
+          });
         }
       };
 
       ws.onclose = () => {
         if (closed) return;
         if (reconnectAttempt >= MAX_WS_RECONNECT_ATTEMPTS) {
-          setConnectionLost(true);
-          if (lastUpdatedRef.current) {
-            setStatus("live");
-            setErrorMessage(null);
-          } else {
-            setStatus("error");
-            setErrorMessage("Connection lost");
-          }
+          dispatch({ type: "ws_lost", hasSnapshot: Boolean(lastUpdatedRef.current) });
           window.dispatchEvent(new CustomEvent("skywatch:ws-connection-lost"));
           return;
         }
-        setStatus(lastUpdatedRef.current ? "live" : "error");
-        setReconnectAttempt(reconnectAttempt + 1);
+        dispatch({
+          type: "ws_reconnecting",
+          attempt: reconnectAttempt + 1,
+          hasSnapshot: Boolean(lastUpdatedRef.current),
+        });
         window.dispatchEvent(
           new CustomEvent("skywatch:ws-reconnecting", {
             detail: { attempt: reconnectAttempt + 1 },
@@ -832,7 +1131,7 @@ export function useFlights() {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [applyFlightSnapshot, rememberAnomalies]);
+  }, [applyFlightSnapshot]);
 
   return {
     flights,
@@ -847,6 +1146,9 @@ export function useFlights() {
     authenticated,
     feedSource,
     sourceCounts,
+    sourceHealth,
+    sourceConflictCount,
+    degraded,
     staleCount,
     maxAgeSeconds,
     refresh: fetchOnce,

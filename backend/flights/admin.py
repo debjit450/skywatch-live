@@ -1,5 +1,16 @@
 from django.contrib import admin
-from .models import Aircraft, FlightState, FlightRoute, FlightPosition, AnomalyEvent, SystemMetrics, AlertRule
+from .models import (
+    Aircraft,
+    FlightState,
+    FlightRoute,
+    FlightPosition,
+    AnomalyEvent,
+    SystemMetrics,
+    AlertRule,
+    IngestionAudit,
+    IngestionSourceHealth,
+    MLModelVersion,
+)
 
 
 @admin.register(Aircraft)
@@ -49,3 +60,25 @@ class AlertRuleAdmin(admin.ModelAdmin):
     list_display = ["name", "type", "user", "active", "updated_at"]
     list_filter = ["type", "active"]
     search_fields = ["name", "user__username"]
+
+
+@admin.register(IngestionSourceHealth)
+class IngestionSourceHealthAdmin(admin.ModelAdmin):
+    list_display = ["source", "status", "confidence_score", "last_success_at", "consecutive_failures", "latency_ms"]
+    list_filter = ["status", "enabled"]
+    search_fields = ["source", "last_error"]
+
+
+@admin.register(IngestionAudit)
+class IngestionAuditAdmin(admin.ModelAdmin):
+    list_display = ["source", "status", "started_at", "duration_ms", "aircraft_count", "normalized_count"]
+    list_filter = ["source", "status"]
+    search_fields = ["source", "error"]
+    date_hierarchy = "started_at"
+
+
+@admin.register(MLModelVersion)
+class MLModelVersionAdmin(admin.ModelAdmin):
+    list_display = ["model_name", "version", "detector_type", "is_active", "trained_at", "created_at"]
+    list_filter = ["model_name", "detector_type", "is_active"]
+    search_fields = ["model_name", "version"]

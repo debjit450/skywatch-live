@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { parseFlights, type OpenSkyResponse } from "@/lib/opensky";
 import { fetchWithTimeout, jsonResponse } from "@/lib/api-safety";
+import { buildDemoFlightPayload } from "@/lib/demo-data";
 
 const TOKEN_URL =
   "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
@@ -48,8 +49,19 @@ async function getAccessToken(): Promise<string | null> {
 export const Route = createFileRoute("/api/flights")({
   server: {
     handlers: {
-      GET: async () => {
+      GET: async ({ request }) => {
         try {
+          const url = new URL(request.url);
+          if (
+            url.searchParams.get("demo") === "1" ||
+            process.env.SKYWATCH_DEMO_MODE === "True" ||
+            process.env.SKYWATCH_DEMO_MODE === "true"
+          ) {
+            return jsonResponse(buildDemoFlightPayload(), {
+              status: 200,
+              headers: { "Cache-Control": "no-store" },
+            });
+          }
           const token = await getAccessToken();
           const headers: Record<string, string> = { Accept: "application/json" };
           if (token) headers.Authorization = `Bearer ${token}`;

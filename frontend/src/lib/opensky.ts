@@ -38,8 +38,13 @@ export interface Flight {
   spi: boolean;
   position_source: number;
   category: number;
+  aircraft_type?: string;
+  registration?: string;
   ml_anomaly_score?: number | null;
   data_source?: string;
+  source_confidence?: number;
+  source_provenance?: string[];
+  source_conflicts?: Array<Record<string, unknown>>;
   predicted_path?: Array<{
     lat: number;
     lon: number;

@@ -12,7 +12,11 @@
     "format": "npm run --prefix frontend format",
     "check": "npm run --prefix frontend check",
     "test": "npm run check && npm run backend:test",
-    "generate:airports": "npm run --prefix frontend generate:airports",
+    "doctor": "node scripts/doctor.mjs",
+    "reset-local-db": "node scripts/reset-local-db.mjs",
+    "smoke": "node scripts/smoke-test.mjs",
+    "security:frontend": "npm audit --prefix frontend --audit-level=high",
+    "security:backend": "node scripts/backend-manage.mjs check --deploy",
     "startup": "powershell -ExecutionPolicy Bypass -File ./startup.ps1",
     "startup:nodock": "powershell -ExecutionPolicy Bypass -File ./startup.ps1 -NoDocker",
     "backend:dev": "node scripts/backend-manage.mjs runserver",
@@ -28,6 +32,6 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "db:reset": "npm run backend:migrate -- migrate --run-syncdb && npm run backend:migrate"
+    "db:reset": "npm run reset-local-db -- --yes"
   }
 }

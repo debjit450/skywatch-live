@@ -118,6 +118,7 @@ export interface DeckWeatherPoint {
   metar: WeatherMetar;
   label: string;
   fillColor: Color;
+  iconName: SkywatchMarkerIconName;
 }
 
 export interface DeckSatellitePoint {
@@ -191,4 +192,23 @@ export interface LayerBuildInput {
   hasValidRoute: boolean;
   satellites: SatelliteObject[];
   visibility: DeckLayerVisibility;
+}
+
+export interface PreparedSkywatchDeckData {
+  visibility: DeckLayerVisibility;
+  hasValidRoute: boolean;
+  selectedId: string | null;
+  routeAirports: Airport[];
+  flightPoints: DeckFlightPoint[];
+  headingPaths: DeckHeadingPath[];
+  predictionPaths: DeckPredictionPath[];
+  routePaths: DeckRoutePath[];
+  trackPaths: DeckTrackPath[];
+  airportPoints: DeckAirportPoint[];
+  weatherPoints: DeckWeatherPoint[];
+  satellitePoints: DeckSatellitePoint[];
+  highlightedFlightPoints: DeckFlightPoint[];
+  airportLabelPoints: DeckAirportPoint[];
+  flightLabelPoints: DeckFlightPoint[];
+  restrictions: RestrictionFeature[];
 }

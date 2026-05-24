@@ -25,5 +25,8 @@ urlpatterns = [
     path("alert-rules/", views.AlertRuleListView.as_view(), name="alert-rule-list"),
     path("alert-rules/<int:pk>/", views.AlertRuleDetailView.as_view(), name="alert-rule-detail"),
     path("sources/", views.DataSourceStatsView.as_view(), name="data-source-stats"),
+    path("source-health/", views.SourceHealthView.as_view(), name="source-health"),
+    path("ingestion-audits/", views.IngestionAuditView.as_view(), name="ingestion-audits"),
+    path("model-status/", views.ModelStatusView.as_view(), name="model-status"),
     path("satellites/", views.SatelliteCatalogView.as_view(), name="satellite-catalog"),
 ]

@@ -130,6 +130,48 @@ def detect_circling(heading_history, now_epoch=None):
     return []
 
 
+_spatial_grid_cache = {"timestamp": None, "grid": None}
+
+
+def _get_spatial_grid(other_flights, timestamp):
+    """
+    Build a spatial grid hash index once per ingestion batch.
+    Replicates flights into all 9 overlapping boundary buckets for O(1) neighbors lookup.
+    """
+    global _spatial_grid_cache
+    if _spatial_grid_cache["timestamp"] == timestamp and _spatial_grid_cache["grid"] is not None:
+        return _spatial_grid_cache["grid"]
+
+    grid = {}
+    for other in other_flights:
+        if other.get("on_ground", False):
+            continue
+        o_raw_lat = other.get("latitude")
+        o_raw_lon = other.get("longitude")
+        o_raw_alt = other.get("baro_altitude")
+        if o_raw_lat is None or o_raw_lon is None or o_raw_alt is None:
+            continue
+        o_lat = _safe_float(o_raw_lat)
+        o_lon = _safe_float(o_raw_lon)
+        o_alt = _safe_float(o_raw_alt)
+
+        # 0.5 degrees grid binning (~55km buckets)
+        lat_bin = int(o_lat / 0.5)
+        lon_bin = int(o_lon / 0.5)
+
+        # Replicate in 9 overlapping bins to perfectly handle boundary cases
+        for dl in [-1, 0, 1]:
+            for dln in [-1, 0, 1]:
+                bin_key = (lat_bin + dl, lon_bin + dln)
+                if bin_key not in grid:
+                    grid[bin_key] = []
+                grid[bin_key].append((other, o_lat, o_lon, o_alt))
+
+    _spatial_grid_cache["timestamp"] = timestamp
+    _spatial_grid_cache["grid"] = grid
+    return grid
+
+
 def detect_proximity(flight, other_flights, min_distance_nm=5.0, now_epoch=None):
     """
     Detect dangerously close aircraft.
@@ -159,26 +201,19 @@ def detect_proximity(flight, other_flights, min_distance_nm=5.0, now_epoch=None)
 
     anomalies = []
     min_distance_km = min_distance_nm * 1.852
+    now = now_epoch or _time.time()
 
-    for other in other_flights:
+    # Retrieve or build spatial grid hash bucket index
+    grid = _get_spatial_grid(other_flights, now)
+    lat_bin = int(lat / 0.5)
+    lon_bin = int(lon / 0.5)
+    bin_key = (lat_bin, lon_bin)
+
+    # Fetch neighbors strictly from the single matching bin bucket (highly optimized)
+    neighbors = grid.get(bin_key, [])
+
+    for other, o_lat, o_lon, o_alt in neighbors:
         if other.get("icao24") == flight.get("icao24"):
-            continue
-        if other.get("on_ground", False):
-            continue
-
-        o_raw_lat = other.get("latitude")
-        o_raw_lon = other.get("longitude")
-        o_raw_alt = other.get("baro_altitude")
-
-        if o_raw_lat is None or o_raw_lon is None or o_raw_alt is None:
-            continue
-            
-        o_lat = _safe_float(o_raw_lat)
-        o_lon = _safe_float(o_raw_lon)
-        o_alt = _safe_float(o_raw_alt)
-
-        # Quick lat/lon pre-filter (1 degree is roughly 111 km)
-        if abs(lat - o_lat) > 0.5 or abs(lon - o_lon) > 0.5:
             continue
 
         dist_km = _haversine_km(lat, lon, o_lat, o_lon)

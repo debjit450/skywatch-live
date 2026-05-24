@@ -26,6 +26,7 @@ class FlightConsumer(AsyncWebsocketConsumer):
         await self.accept()
         websocket_connections.inc()
         await self._increment_connection_count(1)
+        await self._send_initial_snapshot()
         logger.info(
             "ws_connect",
             extra={"client_ip": self.scope.get("client", ["unknown"])[0]},
@@ -63,9 +64,44 @@ class FlightConsumer(AsyncWebsocketConsumer):
         try:
             data = json.loads(text_data)
             if data.get("type") == "ping":
-                await self.send(text_data=json.dumps({"type": "pong"}))
+                await self.send(text_data=json.dumps({"type": "pong", "time": data.get("time")}))
+            elif data.get("type") == "resume":
+                await self._send_initial_snapshot(resume_sequence=data.get("last_sequence"))
         except (json.JSONDecodeError, TypeError):
             logger.debug("Ignored malformed WebSocket message from %s", self.channel_name)
+
+    async def _send_initial_snapshot(self, resume_sequence=None):
+        try:
+            from asgiref.sync import sync_to_async
+            from .services.cache import get_current_flights
+
+            payload = await sync_to_async(get_current_flights)()
+            if not payload:
+                await self.send(text_data=json.dumps({
+                    "type": "degraded",
+                    "data": {
+                        "reason": "no_cached_snapshot",
+                        "resume_sequence": resume_sequence,
+                    },
+                }))
+                return
+            await self.send(text_data=json.dumps({
+                "type": "initial_snapshot",
+                "data": {
+                    "time": payload.get("time"),
+                    "flights": payload.get("states", []),
+                    "authenticated": payload.get("authenticated", False),
+                    "source": "backend",
+                    "count": len(payload.get("states", [])),
+                    "source_counts": payload.get("source_counts", {}),
+                    "source_health": payload.get("source_health", {}),
+                    "source_conflict_count": payload.get("source_conflict_count", 0),
+                    "degraded": payload.get("degraded", False),
+                    "resume_sequence": resume_sequence,
+                },
+            }))
+        except Exception as exc:
+            logger.warning("Failed to send initial WebSocket snapshot: %s", exc)
 
     async def flight_update(self, event):
         """Handle flight update messages from the group."""

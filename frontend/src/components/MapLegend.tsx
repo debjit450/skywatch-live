@@ -19,6 +19,7 @@ import {
   type AircraftClass,
   type AircraftClassInfo,
 } from "@/lib/aircraft-class";
+import AircraftIcon from "@/components/AircraftIcon";
 
 interface MapLegendProps {
   flights: Flight[];
@@ -27,17 +28,19 @@ interface MapLegendProps {
 // ─── Anomaly severity colors ─────────────────────────────────────────────────
 
 const ANOMALY_LEGEND = [
-  { label: "Actual Route", color: "#f97316", shape: "route" as const },
-  { label: "Selected", color: "#00ff7a", shape: "ring" as const },
-  { label: "Anomaly", color: "#ffb020", shape: "ring" as const },
+  { label: "Selected", color: "#3b82f6", shape: "ring" as const },
+  { label: "Anomaly", color: "#f59e0b", shape: "ring" as const },
   { label: "Ground", color: "#64748b", shape: "dot" as const },
+  { label: "Flight Track", color: "#3b82f6", shape: "route" as const },
+  { label: "Planned Route", color: "#facc15", shape: "route" as const },
 ];
 
 const AIRPORT_LEGEND = [
-  { label: "Hub", color: "#a882c8", shape: "square" as const },
-  { label: "Regional", color: "#8296c8", shape: "square" as const },
-  { label: "Heliport", color: "#c86464", shape: "square" as const },
-  { label: "Seaplane", color: "#50b4a0", shape: "square" as const },
+  { label: "Large / Hub", color: "#a855f7", shape: "square" as const },
+  { label: "Medium / Regional", color: "#60a5fa", shape: "square" as const },
+  { label: "Small / Local", color: "#94a3b8", shape: "square" as const },
+  { label: "Heliport", color: "#fb7187", shape: "square" as const },
+  { label: "Route Origin/Dest", color: "#facc15", shape: "square" as const },
 ];
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
@@ -183,7 +186,14 @@ function MapLegend({ flights }: MapLegendProps) {
             const count = classCounts.get(cls.key) ?? 0;
             return (
               <div key={cls.key} style={itemStyle} title={cls.description}>
-                <Swatch color={cls.color} />
+                <AircraftIcon
+                  aircraftClass={cls.key}
+                  size={12}
+                  style={{
+                    color: cls.color,
+                    filter: `drop-shadow(0 0 4px ${cls.color}50)`,
+                  }}
+                />
                 <span style={{ color: count > 0 ? "#e2e8f0" : "#475569" }}>{cls.shortLabel}</span>
                 <span
                   style={{

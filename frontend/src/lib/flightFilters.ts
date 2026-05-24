@@ -144,6 +144,18 @@ export const SEVERITY_FILTERS: Array<{ value: SeverityFilter; label: string }> =
 
 const EMERGENCY_SQUAWKS = new Set(["7500", "7600", "7700"]);
 const QUERY_TOKEN_PATTERN = /"([^"]+)"|[^\s]+/g;
+const FILTER_CACHE_LIMIT = 20_000;
+const parsedQueryCache = new Map<string, ParsedQuery>();
+const searchTextCache = new Map<string, string>();
+
+function cacheSet<T>(cache: Map<string, T>, key: string, value: T): T {
+  if (cache.size >= FILTER_CACHE_LIMIT) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey) cache.delete(firstKey);
+  }
+  cache.set(key, value);
+  return value;
+}
 
 function normalize(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
@@ -217,7 +229,7 @@ function parseFieldToken(token: string): QueryConstraint | null {
   return null;
 }
 
-function parseQuery(query: string): ParsedQuery {
+function parseQueryUncached(query: string): ParsedQuery {
   const terms: string[] = [];
   const fields: QueryConstraint[] = [];
   const numeric: NumericConstraint[] = [];
@@ -239,6 +251,13 @@ function parseQuery(query: string): ParsedQuery {
   }
 
   return { raw: query.trim(), terms, fields, numeric };
+}
+
+function parseQuery(query: string): ParsedQuery {
+  const key = query.trim();
+  const cached = parsedQueryCache.get(key);
+  if (cached) return cached;
+  return cacheSet(parsedQueryCache, key, parseQueryUncached(query));
 }
 
 function compareNumber(value: number | null, operator: NumericOperator, target: number): boolean {
@@ -271,23 +290,42 @@ function fieldValue(flight: Flight, field: QueryField): string {
   return flight.category === 8 ? "8 rotorcraft helicopter" : String(flight.category ?? "");
 }
 
-function flightSearchText(flight: Flight, anomaly?: AnomalousFlight): string {
+function flightSearchSignature(flight: Flight, anomaly?: AnomalousFlight): string {
   return [
     flight.icao24,
-    flight.callsign,
+    flight.callsign ?? "",
     flight.origin_country,
-    countryCode(flight.origin_country),
-    flight.squawk,
-    flight.category ? `cat${flight.category}` : "",
-    flight.category === 8 ? "helicopter rotorcraft heli" : "",
-    airlineFromCallsign(flight.callsign),
-    anomaly?.anomalies.map((item) => item.label).join(" "),
-    anomaly ? "anomaly alert" : "",
-    EMERGENCY_SQUAWKS.has(flight.squawk ?? "") ? "emergency distress" : "",
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+    flight.squawk ?? "",
+    flight.category ?? 0,
+    anomaly?.anomalies.map((item) => item.label).join(",") ?? "",
+  ].join("|");
+}
+
+function flightSearchText(flight: Flight, anomaly?: AnomalousFlight): string {
+  const cacheKey = flightSearchSignature(flight, anomaly);
+  const cached = searchTextCache.get(cacheKey);
+  if (cached) return cached;
+
+  return cacheSet(
+    searchTextCache,
+    cacheKey,
+    [
+      flight.icao24,
+      flight.callsign,
+      flight.origin_country,
+      countryCode(flight.origin_country),
+      flight.squawk,
+      flight.category ? `cat${flight.category}` : "",
+      flight.category === 8 ? "helicopter rotorcraft heli" : "",
+      airlineFromCallsign(flight.callsign),
+      anomaly?.anomalies.map((item) => item.label).join(" "),
+      anomaly ? "anomaly alert" : "",
+      EMERGENCY_SQUAWKS.has(flight.squawk ?? "") ? "emergency distress" : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase(),
+  );
 }
 
 function matchesNumericQuery(flight: Flight, constraint: NumericConstraint): boolean {

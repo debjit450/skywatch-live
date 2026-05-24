@@ -117,6 +117,39 @@ def _lookup_adsbdb(icao24):
     return None
 
 
+def _lookup_planespotters(icao24):
+    """Fallback lookup via planespotters.net public JSON API."""
+    import requests
+    icao24 = _normalize_icao24(icao24)
+    if not icao24:
+        return None
+    url = f"https://api.planespotters.net/pub/photos/hex/{icao24}"
+    try:
+        resp = requests.get(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            },
+            timeout=5
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            photos = data.get("photos") or []
+            if photos:
+                ac = photos[0].get("aircraft", {})
+                airline = ac.get("airline", {})
+                return {
+                    "registration": ac.get("registration", ""),
+                    "manufacturer": ac.get("type", "").split()[0] if ac.get("type") else "",
+                    "aircraft_type": ac.get("type", ""),
+                    "owner": airline.get("name", ""),
+                }
+    except Exception as exc:
+        logger.debug("planespotters lookup failed for %s: %s", icao24, exc)
+    return None
+
+
 def _lookup_aircraft_uncached(icao24):
     """
     Lookup aircraft metadata by ICAO24 hex code.
@@ -131,14 +164,31 @@ def _lookup_aircraft_uncached(icao24):
         
     # Check local DB
     if icao24 in _db_cache:
-        return _db_cache[icao24]
+        cached = _db_cache[icao24]
+        if cached and cached.get("aircraft_type") and cached.get("registration"):
+            return cached
         
-    # Fallback to API
+    # Fallback 1: adsbdb API
     api_result = _lookup_adsbdb(icao24)
-    if api_result:
-        # Cache it to avoid repeated API calls
+    if api_result and api_result.get("aircraft_type") and api_result.get("registration"):
         _db_cache[icao24] = api_result
         return api_result
+        
+    # Fallback 2: planespotters API
+    planespotters_result = _lookup_planespotters(icao24)
+    if planespotters_result and planespotters_result.get("aircraft_type") and planespotters_result.get("registration"):
+        _db_cache[icao24] = planespotters_result
+        return planespotters_result
+        
+    # If we got partial results from adsbdb, return it as last resort
+    if api_result:
+        _db_cache[icao24] = api_result
+        return api_result
+        
+    # If we got partial results from planespotters, return it
+    if planespotters_result:
+        _db_cache[icao24] = planespotters_result
+        return planespotters_result
         
     return None
 

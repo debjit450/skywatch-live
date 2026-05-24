@@ -44,7 +44,7 @@ import {
 import type { Flight } from "@/lib/opensky";
 import { predictFlightState } from "@/lib/prediction";
 import type { SatelliteObject } from "@/lib/satellites";
-import { createSkywatchDeckLayers } from "./map/layers";
+import { createSkywatchDeckLayers, prepareSkywatchDeckData } from "./map/layers";
 import {
   createCartoRasterStyle,
   DEFAULT_LAYER_VISIBILITY,
@@ -90,10 +90,18 @@ interface MapViewProps {
 type LayerToggleKey = keyof DeckLayerVisibility;
 
 const TOOLTIP_MOVE_EPSILON_PX = 2;
+const VIEWPORT_FLIGHT_MARGIN_DEGREES = 2.5;
 
 interface WebglStatus {
   ok: boolean;
   message: string | null;
+}
+
+interface ViewportBounds {
+  west: number;
+  east: number;
+  south: number;
+  north: number;
 }
 
 function DeckOverlay(props: MapboxOverlayProps) {
@@ -166,6 +174,36 @@ function isFiniteCoordinate(lat: number | null | undefined, lon: number | null |
     lat <= 90 &&
     lon >= -180 &&
     lon <= 180
+  );
+}
+
+function readViewportBounds(mapRef: React.RefObject<MapRef | null>): ViewportBounds | null {
+  const map = mapRef.current?.getMap();
+  if (!map) return null;
+  const bounds = map.getBounds();
+  return {
+    west: bounds.getWest(),
+    east: bounds.getEast(),
+    south: bounds.getSouth(),
+    north: bounds.getNorth(),
+  };
+}
+
+function longitudeInViewport(longitude: number, bounds: ViewportBounds): boolean {
+  const west = Math.max(-180, bounds.west - VIEWPORT_FLIGHT_MARGIN_DEGREES);
+  const east = Math.min(180, bounds.east + VIEWPORT_FLIGHT_MARGIN_DEGREES);
+  if (west <= east) return longitude >= west && longitude <= east;
+  return longitude >= west || longitude <= east;
+}
+
+function flightInViewport(flight: Flight, bounds: ViewportBounds): boolean {
+  if (!isFiniteCoordinate(flight.latitude, flight.longitude)) return false;
+  const latitude = flight.latitude as number;
+  const longitude = flight.longitude as number;
+  return (
+    latitude >= bounds.south - VIEWPORT_FLIGHT_MARGIN_DEGREES &&
+    latitude <= bounds.north + VIEWPORT_FLIGHT_MARGIN_DEGREES &&
+    longitudeInViewport(longitude, bounds)
   );
 }
 
@@ -773,6 +811,7 @@ function MapView({
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [restrictionLoading, setRestrictionLoading] = useState(false);
   const [weatherRefreshKey, setWeatherRefreshKey] = useState(0);
+  const [viewportBounds, setViewportBounds] = useState<ViewportBounds | null>(null);
 
   const mapStyle = useMemo(() => createCartoRasterStyle(theme), [theme]);
   const selectedTrackSegments = useMemo(
@@ -783,6 +822,15 @@ function MapView({
     () => (isolateSelected && selectedFlight ? [selectedFlight] : flights),
     [flights, isolateSelected, selectedFlight],
   );
+  const visibleMapFlights = useMemo(() => {
+    if (isolateSelected || !viewportBounds) return mapFlights;
+    return mapFlights.filter(
+      (flight) =>
+        flight.icao24 === selectedId ||
+        anomalyMap.has(flight.icao24) ||
+        flightInViewport(flight, viewportBounds),
+    );
+  }, [anomalyMap, isolateSelected, mapFlights, selectedId, viewportBounds]);
   const routeOrigin = useMemo(
     () => routeAirportPosition(enrichmentRoute?.origin ?? null),
     [enrichmentRoute],
@@ -817,6 +865,10 @@ function MapView({
 
   const toggleLayer = useCallback((key: LayerToggleKey) => {
     setVisibility((current) => ({ ...current, [key]: !current[key] }));
+  }, []);
+
+  const updateViewportBounds = useCallback(() => {
+    setViewportBounds(readViewportBounds(mapRef));
   }, []);
 
   useEffect(() => {
@@ -948,7 +1000,7 @@ function MapView({
 
   const layerInput = useMemo<LayerBuildInput>(
     () => ({
-      flights: mapFlights,
+      flights: visibleMapFlights,
       refreshKey: 0,
       anomalyMap,
       selectedId,
@@ -973,7 +1025,7 @@ function MapView({
       },
     }),
     [
-      mapFlights,
+      visibleMapFlights,
       anomalyMap,
       selectedId,
       airports,
@@ -992,7 +1044,8 @@ function MapView({
     ],
   );
 
-  const deckLayers = useMemo(() => createSkywatchDeckLayers(layerInput), [layerInput]);
+  const deckData = useMemo(() => prepareSkywatchDeckData(layerInput), [layerInput]);
+  const deckLayers = useMemo(() => createSkywatchDeckLayers(deckData), [deckData]);
 
   const handleHover = useCallback((info: PickingInfo<SkywatchPickableObject>) => {
     if (!info.object || !info.layer) {
@@ -1050,8 +1103,9 @@ function MapView({
   );
 
   const handleMoveEnd = useCallback(() => {
+    updateViewportBounds();
     if (visibility.weather) setWeatherRefreshKey((value) => value + 1);
-  }, [visibility.weather]);
+  }, [updateViewportBounds, visibility.weather]);
 
   const retryWebgl = useCallback(() => {
     setWebglStatus(createWebglStatus());
@@ -1073,6 +1127,7 @@ function MapView({
   }, []);
 
   const handleMapLoad = useCallback(() => {
+    updateViewportBounds();
     const canvas = mapRef.current?.getMap().getCanvas();
     if (!canvas) return;
 
@@ -1090,7 +1145,7 @@ function MapView({
     contextLossCleanupRef.current = () => {
       canvas.removeEventListener("webglcontextlost", handleContextLost);
     };
-  }, []);
+  }, [updateViewportBounds]);
 
   useEffect(() => {
     return () => {

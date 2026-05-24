@@ -81,6 +81,8 @@ class FlightState(models.Model):
         indexes = [
             models.Index(fields=["aircraft", "timestamp"]),
             models.Index(fields=["timestamp"]),
+            models.Index(fields=["data_source", "timestamp"], name="flight_state_source_time_idx"),
+            models.Index(fields=["aircraft", "status", "-timestamp"], name="flight_state_air_status_idx"),
             models.Index(fields=["status", "-updated_at"], name="flight_status_updated_idx"),
             models.Index(fields=["origin_airport", "destination_airport"], name="flight_route_airports_idx"),
         ]
@@ -114,6 +116,7 @@ class FlightRoute(models.Model):
         ordering = ["-started_at"]
         indexes = [
             models.Index(fields=["aircraft", "session_id"]),
+            models.Index(fields=["aircraft", "-ended_at"], name="flight_route_recent_idx"),
         ]
 
     def __str__(self):
@@ -140,6 +143,7 @@ class FlightPosition(models.Model):
         ordering = ["timestamp"]
         indexes = [
             models.Index(fields=["aircraft", "timestamp"], name="flight_position_lookup_idx"),
+            models.Index(fields=["data_source", "timestamp"], name="flight_position_source_idx"),
         ]
 
     def __str__(self):
@@ -215,6 +219,13 @@ class AnomalyEvent(models.Model):
     confidence_score = models.FloatField(
         default=0.0, help_text="Combined rule + ML confidence (0-100)"
     )
+    detector_type = models.CharField(
+        max_length=20,
+        blank=True,
+        default="rule",
+        db_index=True,
+        help_text="rule, statistical, ml, ensemble, custom",
+    )
     ml_score = models.FloatField(
         null=True, blank=True, help_text="Raw Isolation Forest anomaly score"
     )
@@ -241,6 +252,8 @@ class AnomalyEvent(models.Model):
         related_name="anomalies",
     )
     details = models.JSONField(default=dict, blank=True)
+    evidence = models.JSONField(default=dict, blank=True)
+    source_quality = models.JSONField(default=dict, blank=True)
     detected_at = models.DateTimeField(default=timezone.now, db_index=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
@@ -255,6 +268,8 @@ class AnomalyEvent(models.Model):
         ordering = ["-detected_at"]
         indexes = [
             models.Index(fields=["is_active", "-detected_at"]),
+            models.Index(fields=["severity", "is_active", "-detected_at"], name="anomaly_severity_status_idx"),
+            models.Index(fields=["source", "-detected_at"], name="anomaly_source_time_idx"),
             models.Index(fields=["anomaly_type", "-detected_at"]),
             models.Index(fields=["-detected_at"], name="anomaly_detected_desc_idx"),
             models.Index(fields=["aircraft", "severity"], name="anomaly_flight_severity_idx"),
@@ -284,6 +299,9 @@ class SystemMetrics(models.Model):
         ordering = ["-timestamp"]
         get_latest_by = "timestamp"
         verbose_name_plural = "System metrics"
+        indexes = [
+            models.Index(fields=["timestamp"], name="system_metrics_time_idx"),
+        ]
 
     def __str__(self):
         return f"Metrics @ {self.timestamp.isoformat()} — {self.total_flights} flights"
@@ -310,3 +328,101 @@ class AircraftProfile(models.Model):
 
     def __str__(self):
         return f"Profile for {self.aircraft_id} ({self.observation_count} obs)"
+
+
+class IngestionSourceHealth(models.Model):
+    """Current operational state for one upstream source."""
+
+    STATUS_CHOICES = [
+        ("ok", "OK"),
+        ("disabled", "Disabled"),
+        ("rate_limited", "Rate limited"),
+        ("degraded", "Degraded"),
+        ("circuit_open", "Circuit open"),
+        ("error", "Error"),
+    ]
+
+    source = models.CharField(max_length=40, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="ok", db_index=True)
+    enabled = models.BooleanField(default=True)
+    confidence_score = models.FloatField(default=1.0)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_error_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    consecutive_failures = models.PositiveIntegerField(default=0)
+    rate_limited_until = models.DateTimeField(null=True, blank=True)
+    circuit_open_until = models.DateTimeField(null=True, blank=True)
+    latency_ms = models.PositiveIntegerField(default=0)
+    aircraft_count = models.PositiveIntegerField(default=0)
+    normalized_count = models.PositiveIntegerField(default=0)
+    rejected_count = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["source"]
+        indexes = [
+            models.Index(fields=["status", "updated_at"], name="source_health_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.source}: {self.status}"
+
+
+class IngestionAudit(models.Model):
+    """Append-only audit row for one source fetch attempt."""
+
+    STATUS_CHOICES = [
+        ("ok", "OK"),
+        ("disabled", "Disabled"),
+        ("skipped", "Skipped"),
+        ("rate_limited", "Rate limited"),
+        ("circuit_open", "Circuit open"),
+        ("error", "Error"),
+    ]
+
+    source = models.CharField(max_length=40, db_index=True)
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, db_index=True)
+    upstream_status = models.CharField(max_length=80, blank=True, default="")
+    aircraft_count = models.PositiveIntegerField(default=0)
+    normalized_count = models.PositiveIntegerField(default=0)
+    rejected_count = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["source", "-started_at"], name="ingest_audit_source_time_idx"),
+            models.Index(fields=["status", "-started_at"], name="ingest_audit_status_time_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.source} {self.status} @ {self.started_at.isoformat()}"
+
+
+class MLModelVersion(models.Model):
+    """Model governance snapshot for anomaly scoring."""
+
+    model_name = models.CharField(max_length=80)
+    version = models.CharField(max_length=80)
+    detector_type = models.CharField(max_length=30, default="ml")
+    training_sample_count = models.PositiveIntegerField(default=0)
+    trained_at = models.DateTimeField(null=True, blank=True)
+    metrics = models.JSONField(default=dict, blank=True)
+    thresholds = models.JSONField(default=dict, blank=True)
+    drift_indicators = models.JSONField(default=dict, blank=True)
+    artifact_path = models.CharField(max_length=255, blank=True, default="")
+    is_active = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["model_name", "is_active"], name="ml_model_active_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.model_name}:{self.version}"

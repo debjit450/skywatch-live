@@ -8,6 +8,7 @@ import {
   twoline2satrec,
 } from "satellite.js";
 import { fetchWithTimeout, jsonResponse } from "@/lib/api-safety";
+import { buildDemoSatellitePayload } from "@/lib/demo-data";
 
 const CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php";
 const CACHE_TTL_MS = 15 * 60 * 1000;
@@ -284,6 +285,16 @@ export const Route = createFileRoute("/api/satellites")({
     handlers: {
       GET: async ({ request }) => {
         const url = new URL(request.url);
+        if (
+          url.searchParams.get("demo") === "1" ||
+          process.env.SKYWATCH_DEMO_MODE === "True" ||
+          process.env.SKYWATCH_DEMO_MODE === "true"
+        ) {
+          return jsonResponse(buildDemoSatellitePayload(), {
+            status: 200,
+            headers: { "Cache-Control": "no-store" },
+          });
+        }
         const groups = selectedGroups(url.searchParams.get("groups"));
         const limit = parseLimit(url.searchParams.get("limit"));
         const now = new Date();

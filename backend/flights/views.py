@@ -24,7 +24,18 @@ from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .models import Aircraft, FlightState, FlightRoute, FlightPosition, AnomalyEvent, SystemMetrics, AlertRule
+from .models import (
+    Aircraft,
+    FlightState,
+    FlightRoute,
+    FlightPosition,
+    AnomalyEvent,
+    SystemMetrics,
+    AlertRule,
+    IngestionAudit,
+    IngestionSourceHealth,
+    MLModelVersion,
+)
 from .serializers import (
     FlightStateLiveSerializer,
     FlightRouteSerializer,
@@ -34,9 +45,14 @@ from .serializers import (
     SystemMetricsSerializer,
     FlightPositionSerializer,
     AlertRuleSerializer,
+    IngestionAuditSerializer,
+    IngestionSourceHealthSerializer,
+    MLModelVersionSerializer,
 )
 from .services.cache import get_current_flights
 from .services.anomaly_detector import detect_all
+from .services.demo_data import build_demo_flight_payload
+from .services.source_adapters import annotate_state_source_quality, source_health_payload
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +541,10 @@ class FlightListView(APIView):
     """
 
     def get(self, request):
+        if getattr(settings, "SKYWATCH_DEMO_MODE", False) or request.query_params.get("demo") == "1":
+            payload = build_demo_flight_payload()
+            return _freshness_response(payload)
+
         # Try cache first
         cached = get_current_flights()
         if cached:
@@ -538,6 +558,8 @@ class FlightListView(APIView):
                 for state in states:
                     src = state.get("data_source") or "unknown"
                     source_counts[src] = source_counts.get(src, 0) + 1
+            health_payload = cached.get("source_health") or source_health_payload()
+            annotate_state_source_quality(states, health_payload)
             return _freshness_response({
                 "time": cached.get("time", int(time.time())),
                 "flights": states,
@@ -547,6 +569,9 @@ class FlightListView(APIView):
                 "stale_count": stale_count,
                 "max_age_seconds": round(max_age, 1),
                 "source_counts": source_counts,
+                "source_health": health_payload,
+                "source_conflict_count": cached.get("source_conflict_count", 0),
+                "degraded": cached.get("degraded", False),
             })
 
         try:
@@ -561,6 +586,8 @@ class FlightListView(APIView):
                 for state in live_states:
                     src = state.get("data_source") or "unknown"
                     source_counts[src] = source_counts.get(src, 0) + 1
+                health_payload = source_health_payload()
+                annotate_state_source_quality(live_states, health_payload)
                 return _freshness_response({
                     "time": live.get("time", int(time.time())),
                     "flights": live_states,
@@ -570,6 +597,9 @@ class FlightListView(APIView):
                     "stale_count": stale_count,
                     "max_age_seconds": round(max_age, 1),
                     "source_counts": source_counts,
+                    "source_health": health_payload,
+                    "source_conflict_count": 0,
+                    "degraded": any(item.get("status") not in {"ok", "disabled"} for item in health_payload.values()),
                 })
         except Exception as exc:
             logger.warning("Live OpenSky fetch failed before database fallback: %s", exc)
@@ -656,6 +686,8 @@ class FlightListView(APIView):
             })
 
         states, stale_count, max_age = _fresh_states(states)
+        health_payload = source_health_payload()
+        annotate_state_source_quality(states, health_payload)
         response_time = int(time.time())
         if states:
             response_time = int(max((state.get("time_position") or state.get("last_contact") or 0) for state in states))
@@ -668,6 +700,9 @@ class FlightListView(APIView):
             "count": len(states),
             "stale_count": stale_count,
             "max_age_seconds": round(max_age, 1),
+            "source_health": health_payload,
+            "source_conflict_count": sum(len(state.get("source_conflicts", [])) for state in states),
+            "degraded": any(item.get("status") not in {"ok", "disabled"} for item in health_payload.values()),
         })
 
 
@@ -862,6 +897,40 @@ class AnomalyListView(APIView):
     """
 
     def get(self, request):
+        if getattr(settings, "SKYWATCH_DEMO_MODE", False) or request.query_params.get("demo") == "1":
+            payload = build_demo_flight_payload()
+            emergency = next((state for state in payload["states"] if state.get("squawk") == "7700"), None)
+            return Response({
+                "anomalies": [] if emergency is None else [{
+                    "id": 1,
+                    "icao24": emergency["icao24"],
+                    "callsign": emergency["callsign"],
+                    "origin_country": emergency["origin_country"],
+                    "anomaly_type": "squawk_7700",
+                    "severity": "critical",
+                    "confidence_score": 99,
+                    "detector_type": "rule",
+                    "ml_score": emergency.get("ml_anomaly_score"),
+                    "details": {"squawk": "7700", "demo": True},
+                    "evidence": {"rule": "emergency_squawk", "observed": "7700"},
+                    "source_quality": {"source": "demo", "confidence_score": 0.99},
+                    "explanation": [{
+                        "factor": "Emergency squawk",
+                        "description": "Demo target is broadcasting transponder code 7700.",
+                        "severity": "critical",
+                    }],
+                    "source": "demo",
+                    "detected_at": timezone.now().isoformat(),
+                    "resolved_at": None,
+                    "is_active": True,
+                    "latitude": emergency["latitude"],
+                    "longitude": emergency["longitude"],
+                    "altitude": emergency.get("baro_altitude"),
+                    "velocity": emergency.get("velocity"),
+                }],
+                "total": 1 if emergency else 0,
+            })
+
         severity = request.query_params.get("severity")
         anomaly_type = request.query_params.get("type")
         active_only = request.query_params.get("active", "true").lower() == "true"
@@ -1253,6 +1322,7 @@ class PlaybackView(APIView):
     """GET /api/v1/playback?flight_id=X&start=ISO8601&end=ISO8601."""
 
     permission_classes = [IsAuthenticated]
+    throttle_scope = "playback"
 
     def get(self, request):
         flight_id = _normalize_icao24(request.query_params.get("flight_id"))
@@ -1332,6 +1402,7 @@ class AnomalyExplanationView(APIView):
 
 class AnomalyFeedbackView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_scope = "alert_mutation"
 
     def post(self, request, pk):
         verdict = request.data.get("verdict")
@@ -1348,6 +1419,7 @@ class AnomalyFeedbackView(APIView):
 
 class AlertRuleListView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = "alert_mutation"
 
     def get(self, request):
         rules = AlertRule.objects.filter(user=_alert_rule_owner(request)).order_by("name")
@@ -1362,6 +1434,7 @@ class AlertRuleListView(APIView):
 
 class AlertRuleDetailView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = "alert_mutation"
 
     def patch(self, request, pk):
         try:
@@ -1391,6 +1464,7 @@ class DataSourceStatsView(APIView):
         states = cached.get("states", []) if cached else []
         if not isinstance(states, list):
             states = []
+        health_payload = source_health_payload()
 
         source_counts = {}
         for s in states:
@@ -1460,6 +1534,7 @@ class DataSourceStatsView(APIView):
             sources.append({
                 "key": src_key,
                 "count": count,
+                "health": health_payload.get(src_key, {}),
                 **info,
             })
 
@@ -1467,6 +1542,62 @@ class DataSourceStatsView(APIView):
             "sources": sources,
             "total": len(states),
             "source_count": len(source_counts),
+            "health": health_payload,
+            "recent_audits": IngestionAuditSerializer(
+                IngestionAudit.objects.order_by("-started_at")[:25],
+                many=True,
+            ).data,
+        })
+
+
+class SourceHealthView(APIView):
+    """GET /api/v1/source-health/."""
+
+    def get(self, request):
+        rows = IngestionSourceHealth.objects.order_by("source")
+        return Response({
+            "sources": IngestionSourceHealthSerializer(rows, many=True).data,
+            "generated_at": timezone.now().isoformat(),
+        })
+
+
+class IngestionAuditView(APIView):
+    """GET /api/v1/ingestion-audits/?source=opensky."""
+
+    def get(self, request):
+        source = request.query_params.get("source")
+        qs = IngestionAudit.objects.order_by("-started_at")
+        if source:
+            qs = qs.filter(source=source)
+        paginator = PageNumberPagination()
+        paginator.page_size = _int_query_param(request, "page_size", 50, 1, 200)
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(IngestionAuditSerializer(page, many=True).data)
+
+
+class ModelStatusView(APIView):
+    """GET /api/v1/model-status/."""
+
+    def get(self, request):
+        active_models = MLModelVersion.objects.filter(is_active=True).order_by("model_name")
+        try:
+            import tensorflow  # noqa: F401
+
+            lstm_available = True
+        except Exception:
+            lstm_available = False
+
+        return Response({
+            "models": MLModelVersionSerializer(active_models, many=True).data,
+            "detectors": {
+                "rules": {"available": True, "version": "built-in"},
+                "statistical": {"available": True, "version": "iforest+profile"},
+                "lstm": {
+                    "available": lstm_available,
+                    "reason": None if lstm_available else "TensorFlow/Keras is not installed or no model is loaded.",
+                },
+            },
+            "generated_at": timezone.now().isoformat(),
         })
 
 
@@ -1477,6 +1608,39 @@ class SatelliteCatalogView(APIView):
     """
 
     def get(self, request):
+        if getattr(settings, "SKYWATCH_DEMO_MODE", False) or request.query_params.get("demo") == "1":
+            return _freshness_response({
+                "time": int(time.time()),
+                "generated_at": timezone.now().isoformat(),
+                "source": "demo",
+                "status": "ok",
+                "propagator": "fixed-demo",
+                "satellites": [{
+                    "id": "25544",
+                    "name": "ISS (DEMO)",
+                    "group": "stations",
+                    "group_label": "Space stations",
+                    "latitude": 18.2,
+                    "longitude": 73.8,
+                    "altitude_km": 420,
+                    "velocity_kms": 7.66,
+                    "orbit_quality": "fresh",
+                    "source": "demo",
+                    "propagator": "fixed-demo",
+                }],
+                "count": 1,
+                "source_counts": {"stations": 1},
+                "groups": [{
+                    "key": "stations",
+                    "name": "Space stations",
+                    "celestrak_group": "stations",
+                    "count": 1,
+                    "color": "#22c55e",
+                }],
+                "errors": {},
+                "coverage": {"demo_mode": True, "public_sources_only": False},
+            })
+
         if not getattr(settings, "CELESTRAK_SATELLITES_ENABLED", True):
             return _freshness_response(
                 {"error": "Satellite catalog disabled", "satellites": [], "count": 0},

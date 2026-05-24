@@ -97,6 +97,7 @@ class StructlogRequestMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        started = time.perf_counter()
         try:
             import structlog
 
@@ -108,7 +109,20 @@ class StructlogRequestMiddleware:
             )
         except Exception:
             pass
-        return self.get_response(request)
+        response = self.get_response(request)
+        try:
+            from flights.metrics import api_latency_seconds
+
+            match = getattr(request, "resolver_match", None)
+            metric_path = getattr(match, "url_name", None) or request.path
+            api_latency_seconds.labels(
+                method=request.method,
+                path=str(metric_path),
+                status=str(response.status_code),
+            ).observe(time.perf_counter() - started)
+        except Exception:
+            pass
+        return response
 
 
 class JsonLogFormatter(logging.Formatter):

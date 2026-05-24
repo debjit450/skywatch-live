@@ -50,6 +50,8 @@ import type {
 import { fetchBackendJson } from "@/lib/backend-api";
 import HelicopterIcon from "@/components/HelicopterIcon";
 import { getAirportCode, type Airport } from "@/lib/airports";
+import { classifyFlight, AIRCRAFT_CLASSES } from "@/lib/aircraft-class";
+import AircraftIcon from "@/components/AircraftIcon";
 import { anomalyIcons } from "@/lib/icons";
 import { predictFlightState } from "@/lib/prediction";
 import {
@@ -442,6 +444,8 @@ function FlightDetailPanel({
   const callsign = flight.callsign?.trim() || "UNKNOWN";
   const airline = airlineFromCallsign(flight.callsign);
   const rt = enrichment?.route ?? null;
+  const aircraftClass = classifyFlight(flight);
+  const classColor = AIRCRAFT_CLASSES[aircraftClass]?.color || "#64748b";
 
   const prediction = predictFlightState(flight, clockNow / 1000);
   const altFt = altitudeFt(prediction.baroAltitude);
@@ -707,23 +711,15 @@ function FlightDetailPanel({
             flex items-center justify-center
           "
           >
-            {flight.category === 8 ? (
-              <HelicopterIcon
-                className="w-4 h-4 text-[var(--sw-text)]"
-                style={{
-                  transform: `rotate(${(flight.true_track ?? 0) - 90}deg)`,
-                  transition: "transform 0.7s ease",
-                }}
-              />
-            ) : (
-              <Plane
-                className="w-4 h-4 text-[var(--sw-text)]"
-                style={{
-                  transform: `rotate(${(flight.true_track ?? 0) - 45}deg)`,
-                  transition: "transform 0.7s ease",
-                }}
-              />
-            )}
+            <AircraftIcon
+              aircraftClass={aircraftClass}
+              heading={flight.true_track ?? undefined}
+              size={18}
+              style={{
+                color: classColor,
+                filter: `drop-shadow(0 0 5px ${classColor}60)`,
+              }}
+            />
             {/* Live pulse indicator */}
             <span className="absolute -top-0.5 -right-0.5 flex w-2.5 h-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>

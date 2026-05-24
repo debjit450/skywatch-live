@@ -6202,85 +6202,10 @@ body,
   inset: 0 !important;
 }
 
-/* Liquid Glass Ambient Blobs (Backdrop Layer) */
-.sw-liquid-ambient-container {
-  position: fixed;
-  inset: 0;
-  z-index: 1; /* Under Leaflet controls and dashboard panels */
-  pointer-events: none;
-  overflow: hidden;
-  opacity: 0.75;
-}
-
+/* Ambient blob layer is intentionally disabled; the map carries the scene. */
+.sw-liquid-ambient-container,
 .sw-liquid-blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.32;
-  mix-blend-mode: screen;
-  pointer-events: none;
-}
-
-/* organic drifting liquid keyframes */
-@keyframes blob-drift-1 {
-  0% {
-    transform: translate(0px, 0px) scale(1) rotate(0deg);
-    border-radius: 43% 57% 41% 59% / 57% 45% 55% 43%;
-  }
-  33% {
-    transform: translate(120px, 180px) scale(1.3) rotate(120deg);
-    border-radius: 70% 30% 52% 48% / 60% 40% 60% 40%;
-  }
-  66% {
-    transform: translate(-90px, 90px) scale(0.85) rotate(240deg);
-    border-radius: 48% 52% 70% 30% / 50% 50% 50% 50%;
-  }
-  100% {
-    transform: translate(0px, 0px) scale(1) rotate(360deg);
-    border-radius: 43% 57% 41% 59% / 57% 45% 55% 43%;
-  }
-}
-
-@keyframes blob-drift-2 {
-  0% {
-    transform: translate(0px, 0px) scale(1.2) rotate(360deg);
-    border-radius: 50% 50% 30% 70% / 50% 60% 40% 50%;
-  }
-  50% {
-    transform: translate(-140px, -90px) scale(0.9) rotate(180deg);
-    border-radius: 35% 65% 55% 45% / 45% 55% 35% 65%;
-  }
-  100% {
-    transform: translate(0px, 0px) scale(1.2) rotate(0deg);
-    border-radius: 50% 50% 30% 70% / 50% 60% 40% 50%;
-  }
-}
-
-.sw-liquid-blob-1 {
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.45) 0%, rgba(16, 185, 129, 0) 70%);
-  top: 15%;
-  right: 8%;
-  animation: blob-drift-1 25s infinite linear;
-}
-
-.sw-liquid-blob-2 {
-  width: 550px;
-  height: 550px;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.4) 0%, rgba(59, 130, 246, 0) 70%);
-  bottom: 12%;
-  left: 12%;
-  animation: blob-drift-2 32s infinite linear;
-}
-
-.sw-liquid-blob-3 {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, rgba(168, 85, 247, 0.35) 0%, rgba(168, 85, 247, 0) 70%);
-  top: 38%;
-  left: 40%;
-  animation: blob-drift-1 20s infinite linear reverse;
+  display: none !important;
 }
 
 /* Glassmorphism panel styles */
@@ -6304,12 +6229,16 @@ body,
     rgba(15, 23, 42, 0.5) 0%,
     rgba(30, 41, 59, 0.3) 100%
   ) !important;
-  backdrop-filter: blur(28px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  backdrop-filter: blur(16px) saturate(120%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(120%) !important;
   box-shadow:
     inset 0 1px 1px rgba(255, 255, 255, 0.12),
     0 12px 40px rgba(0, 0, 0, 0.65) !important;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  transition:
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.2s ease,
+    background-color 0.2s ease !important;
 }
 
 /* Sub-card glass items inside the panels */
@@ -6323,8 +6252,8 @@ body,
   border-radius: 12px !important;
   background: rgba(255, 255, 255, 0.03) !important;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* hover states for glass cards */

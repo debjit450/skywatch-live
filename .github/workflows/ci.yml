@@ -56,12 +56,17 @@ jobs:
       CORS_ALLOWED_ORIGINS: "https://example.com"
       DATABASE_URL: "postgres://skywatch:skywatch@localhost:5432/skywatch"
       REDIS_URL: "redis://localhost:6379/0"
+      ALLOW_IN_MEMORY_CHANNEL_LAYER: "False"
       DJANGO_SECURE_SSL_REDIRECT: "True"
       DJANGO_SECURE_HSTS_SECONDS: "31536000"
       DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS: "True"
       DJANGO_SECURE_HSTS_PRELOAD: "True"
       DJANGO_SESSION_COOKIE_SECURE: "True"
       DJANGO_CSRF_COOKIE_SECURE: "True"
+      SKYWATCH_DEPLOYMENT_PROFILE: "production"
+      DJANGO_ADMIN_URL_PATH: "ci-admin/"
+      METRICS_USER: "skywatch"
+      METRICS_PASSWORD: "ci-metrics-password"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -74,3 +79,33 @@ jobs:
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test
       - run: python manage.py collectstatic --noinput --clear
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -f backend/Dockerfile backend
+      - run: docker build -f frontend/Dockerfile frontend
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: npm ci
+        working-directory: frontend
+      - run: npm audit --audit-level=high
+        working-directory: frontend
+      - run: python -m pip install --upgrade pip pip-audit
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - run: pip-audit
