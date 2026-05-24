@@ -26,7 +26,9 @@ Once active, open your browser to access:
 * **Django REST API:** `http://localhost:8000/api/v1/`
 * **Django Administrative Panel:** `http://localhost:8000/admin/`
 
----
+- Frontend dashboard: `http://localhost:5173`
+- Backend REST API: `http://localhost:8000/api/v1/`
+- Django admin: `http://localhost:8000/admin/`
 
 ## 2. Dockerless Fallback Mode
 
@@ -41,7 +43,7 @@ npm run dev-all
 ```
 *Note: Standalone fallback mode uses localizedSQLite persistence. It is suitable for rapid dashboard UI hacking but does not scale horizontally.*
 
----
+## Development Commands
 
 ## 3. Background Aviation Ingestion
 

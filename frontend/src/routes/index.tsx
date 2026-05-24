@@ -207,6 +207,24 @@ function Index() {
     [resetSelectedTracking],
   );
 
+  const handleSelect = useCallback(
+    (id: string | null) => {
+      setSelectedId(id);
+      setIsFlightPanelMinimized(false);
+
+      if (id) {
+        setIsSelectedPathVisible(true);
+        setIsFollowingSelected(true);
+        setIsPanelOpen(true);
+        return;
+      }
+
+      resetSelectedTracking();
+      setIsPanelOpen(false);
+    },
+    [resetSelectedTracking],
+  );
+
   const handleSelectCountry = useCallback((country: string) => {
     setSelectedCountry(country);
     setFocusKey((key) => key + 1);
