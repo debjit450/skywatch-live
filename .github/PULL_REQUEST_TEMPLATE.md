@@ -52,7 +52,7 @@ Describe how you tested your changes:
 
 ## Checklist
 
-- [ ] My changes follow the code style guidelines (ESLint, Black, isort)
+- [ ] My changes follow the repository's existing frontend/backend style
 - [ ] I have performed a self-review of my own code
 - [ ] I have commented my code, particularly in hard-to-understand areas
 - [ ] I have updated the documentation accordingly

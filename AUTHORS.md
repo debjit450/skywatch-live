@@ -1,5 +1,7 @@
 # Contributors
 
+Last reviewed: 2026-05-24.
+
 SkyWatch Live is developed and maintained by open source contributors.
 
 ## Core Team
@@ -40,8 +42,10 @@ SkyWatch Live stands on the shoulders of giants. We'd like to thank:
 - [Django Channels](https://channels.readthedocs.io/) - WebSocket support
 - [Celery](https://docs.celeryproject.org/) - Distributed task queue
 - [React](https://react.dev/) - Frontend library
-- [TanStack](https://tanstack.com/) - Modern data tools
-- [Leaflet](https://leafletjs.com/) - Interactive maps
+- [TanStack](https://tanstack.com/) - Router, Start, Query, and related frontend tooling
+- [MapLibre GL](https://maplibre.org/) - WebGL map rendering
+- [deck.gl](https://deck.gl/) - High-performance map overlays
+- [react-map-gl](https://visgl.github.io/react-map-gl/) - React bindings for the map surface
 - [PostgreSQL](https://www.postgresql.org/) - Database
 - [Redis](https://redis.io/) - Cache and broker
 - [Prometheus](https://prometheus.io/) - Monitoring
@@ -52,7 +56,8 @@ SkyWatch Live stands on the shoulders of giants. We'd like to thank:
 
 - [OpenSky Network](https://opensky-network.org/) - Flight state data
 - [ADS-B One](https://www.adsb.one/) - ADS-B aggregation
-- [Airplanes.live](https://airplanes.live/) - Multiple ADS-B sources
+- [Airplanes.live](https://airplanes.live/) - ADS-B, military/radar aggregate, UAT, and oceanic ADS-B point sources
+- [ADSB.lol](https://adsb.lol/) - ADS-B aggregation
 - [ADSBDB](https://www.adsbdb.com/) - Aircraft metadata
 - [CelesTrak](https://celestrak.org/) - Satellite TLE data
 - [Aviation Weather Center](https://aviationweather.gov/) - Weather and SIGMET

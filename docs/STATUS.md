@@ -4,63 +4,55 @@ Last reviewed: 2026-05-24.
 
 ## Verification Snapshot
 
-During this final closure pass, the complete repository verification pipeline has been executed with the following results:
-* `npm run doctor`: Passed successfully (Node.js v24, npm v9 warning, Python 3.10 warning, Docker Compose present).
-* `npm run check`: Passed cleanly with zero TypeScript compiler or Prettier/ESLint errors, building fully optimized production client and server bundles.
-* `npm run backend:check`: Passed cleanly with zero system issues identified.
-* `npm run backend:test`: Passed with 100% success (7/7 Django unit tests executed successfully in under 0.8 seconds).
-* `node scripts/backend-manage.mjs makemigrations --check --dry-run`: Passed cleanly with no migration drift or uncommitted database changes detected.
-* `docker compose up -d`: Locally blocked due to Docker Desktop daemon constraints; fallback local SQLite/in-memory mode fully operational.
+This documentation and license-audit pass verified the repository against the current code/configuration source of truth.
+
+| Check | Result |
+| :--- | :--- |
+| `npm run check` | Passed. Frontend TypeScript, ESLint, and production client/server build completed. |
+| `npm run backend:check` with local debug env | Passed with no system-check issues. |
+| `npm run backend:test` with local debug env | Passed. Django ran 7 tests successfully. |
+| `node scripts/backend-manage.mjs makemigrations --check --dry-run` with local debug env | Passed with no migration changes detected. |
+| `npm run backend:check-deploy` with production-like env overrides | Exited successfully. It reported drf-spectacular schema warnings for APIViews without explicit serializers and an operationId collision warning; no blocking Django deployment errors were raised. |
+
+Notes:
+
+- The first backend test attempt failed because `backend/venv` existed without Django installed. Backend requirements were installed into the ignored local venv and the command was rerun successfully.
+- Backend tests emitted OpenTelemetry export warnings because no local collector was listening on `localhost:4317`; the tests still passed.
+- Docker Compose was not started during this pass.
 
 ## Works Today
 
-- **Frontend-Only Dashboard Mode:** Fully functional TanStack Start application making client/server-side API calls to retrieve live flights, Propagate visual satellites via SGP4, query metadata from ADSBDB, and proxy aircraft photos.
-- **Full-Stack Mode:** Daphne/ASGI server exposing Django REST APIs, Channels WebSockets, Celery task brokers, Redis caching, and PostgreSQL integration.
-- **Backend Ingestion Engine:** Merges primary OpenSky states with supplemental public aggregator feeds (ADS-B One, Airplanes.live, ADSB.lol), specialty APRS streams (OGN/FLARM), and regional receivers (UAT, military/radar aggregates, oceanic satellite ADS-B).
-- **Satellite situational awareness:** Utilizes CelesTrak GP/TLE data catalogs to compute sub-satellite propagation points with real-time orbit quality labels.
-- **Active Airspace Overlays:** normalization pipelines rendering domestic FAA TFR maps and Aviation Weather Center SIGMET/METAR weather overlays.
+- Frontend-only TanStack Start dashboard using server routes for OpenSky flights, CelesTrak satellites, ADSBDB metadata/photos, and OpenSky track lookups.
+- MapLibre/deck.gl dashboard with source-aware aircraft rendering, overlays, filters, detail panels, analytics, alert-rule UI, and satellite/weather/restriction layers.
+- Django REST API under `/api/v1/` for flights, routes, predictions, anomalies, analytics, weather, airspace, alert rules, sources, source health, ingestion audits, model status, and satellites.
+- Django Channels WebSocket stream at `/ws/flights/` for initial snapshots, committed flight updates, anomaly alerts, and ping/pong health traffic.
+- Celery ingestion pipeline merging OpenSky with enabled supplemental sources, persisting state/history, caching current snapshots, broadcasting WebSocket updates, and enqueueing anomaly/route/enrichment work after commit.
+- Prometheus metrics at `/metrics`, JSON health metrics at `/health/metrics`, optional Sentry, optional OpenTelemetry export, and Grafana/Prometheus/Jaeger local provisioning.
 
 ## Degraded By Public API Limits
 
-- **OpenSky Network Ingestion:** Throttles or yields sparse regional coverage under high public access. Optional credentials drastically improve rate limit headroom but do not eliminate geographic receiver blindspots.
-- **Supplemental Aggregator Feeds:** Airplanes.live, ADSB.lol, and UAT coverage depends entirely on crowd-sourced receiver density and local receiver availability.
-- **ADSBDB Image Proxy:** Subject to independent upstream photo availability and non-critical rate limits.
-- **CelesTrak Elements:** Bootstrap fallback TLEs are intentionally preserved to maintain orbital visualization during upstream API outages, though they may become stale.
+- OpenSky public access can throttle or return sparse regional coverage. Credentials improve rate limits but do not guarantee full receiver coverage.
+- Supplemental ADS-B, UAT, OGN, satellite ADS-B, and military/radar aggregate coverage depends on public receiver density and upstream availability.
+- ADSBDB metadata/photo availability is non-critical and upstream-dependent.
+- CelesTrak fallback TLEs keep the satellite visualization usable when the live source is unavailable, but fallback records can become stale.
 
-## Hard Infrastructure Dependencies (Full-Stack)
+## Full-Stack Infrastructure Dependencies
 
-The complete full-stack environment depends on the following Docker containers for continuous ingestion:
-- **PostgreSQL:** For persistence of Normalized Flights, Position Tracks, and Anomaly logs.
-- **Redis:** For Django Channels WebSocket fanout, Celery brokers, and local API cache layers.
-- **PgBouncer:** For database connection pooling during parallel ingestion.
-- **Prometheus & Grafana:** For Scraping operational metrics and displaying real-time ingest/WebSocket/queue charts.
-- **Jaeger:** For distributed request-tracing and bottleneck detection.
+The complete ingestion path depends on:
 
-*Note: A lightweight SQLite and In-Memory channel/cache layer fallback is automatically enabled for local development when `DJANGO_DEBUG=True` and `ALLOW_IN_MEMORY_CHANNEL_LAYER=True` are set in `.env`.*
+- PostgreSQL for durable aircraft, state, position, route, anomaly, audit, and model records.
+- Redis for cache, Django Channels, Celery broker, and Celery result backend.
+- Celery worker plus Celery Beat for background ingestion, scoring, alert evaluation, cleanup, and model retraining.
+- Optional PgBouncer for database pooling under higher concurrency.
+- Optional Prometheus, Grafana, and Jaeger for local observability.
 
-## Implemented Hardening & Capabilities (Completed Audit Pass)
+Local debug mode can use SQLite and in-memory cache/channel fallbacks when `DJANGO_DEBUG=True` and `ALLOW_IN_MEMORY_CHANNEL_LAYER=True`. Production blocks that fallback.
 
-During this final pass, all technical gaps and limitations identified in the audit have been fully resolved, implemented, and verified:
+## Documentation Changes In This Pass
 
-### 1. Dynamic History-Aware Feature Extraction
-In `backend/ml/features.py`, the 30-dimensional flight feature extractor is no longer stateless or hardcoded:
-* **`heading_rate`**, **`heading_consistency`** (via circular standard deviation variance), and **`curvature`** are dynamically computed using historical sequence buffers.
-* **`signal_decay`**, **`position_stale`**, and **`contact_gap`** analyze actual chronological intervals between contacts from active history.
-* *Optimized Performance:* Bulk flight state history is queried using a single database prefetch inside `score_flights` (`anomaly_detector.py`) to prevent N-query performance degradation.
-
-### 2. High-Performance Python Spatial Grid Hash Index
-* To prevent $O(N^2)$ comparisons during proximity geofencing checks (`advanced_detection.py`), we implemented a modular **2D Spatial Grid Hash Index** with 0.5-degree grid binning (~55km buckets).
-* Flights are replicated across all 9 neighboring boundary grid cells. This guarantees that horizontal (<5 NM) and vertical (<1000 ft) proximity checks scale at $O(1)$ neighbors lookup, supporting over 10,000 active aircraft under pure Python/SQLite fallbacks with zero performance bottlenecks.
-
-### 3. Automated Model Training Pipelines
-* Added automated Celery retraining schedules directly into the `CELERY_BEAT_SCHEDULE`:
-  * `retrain-model-daily`: Heartbeat to retrain the standard Isolation Forest, LOF, and autoencoder ensemble models.
-  * `retrain-lstm-model-weekly`: Automatically retrains, splits, and hot-swaps the optional LSTM sequence autoencoder binary when TensorFlow is available.
-
-### 4. Database Partitioning & Pruning Integration
-* In full-stack mode, databases grow rapidly. The `cleanup-old-data-hourly` Celery task is fully integrated to prune flight states, metrics, and position points older than 7 days, maintaining a stable storage envelope.
-
-### 5. Horizontal WebSocket Channels Scaling
-* Clustered Redis channel layers are fully documented for multi-node Daphne ASGI socket scalability, completely eliminating single-process WebSocket constraints in production profiles.
-
-
+- Updated README, quick start, deployment, testing, troubleshooting, support, security, contributing, data-source, development, production, status, and architecture docs.
+- Added [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+- Corrected architecture diagrams for MapLibre/deck.gl, TanStack Start server routes, Django REST/Channels, Celery, Redis, PostgreSQL, Prometheus, Grafana, and Jaeger.
+- Corrected the frontend local port from stale `5173` references to the configured Vite port `8080`.
+- Corrected Docker Compose wording: the current Compose file provisions infrastructure, not backend/frontend application services.
+- Corrected source merge behavior documentation to match the code path: freshest `last_contact` wins per ICAO24, while provenance/conflict/source-health metadata is retained.

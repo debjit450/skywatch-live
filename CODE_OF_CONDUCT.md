@@ -1,5 +1,7 @@
 # Contributor Covenant Code of Conduct
 
+Last reviewed: 2026-05-24.
+
 ## Our Commitment
 
 We are committed to providing a welcoming and inspiring community for all. We pledge that everyone participating in the SkyWatch Live community will treat all people with respect and help create a safe, positive environment for everyone, regardless of experience level, gender, gender identity and expression, sexual orientation, disability, personal appearance, body size, race, ethnicity, age, religion, or nationality.
@@ -38,7 +40,7 @@ This Code of Conduct applies both within project spaces and in public spaces whe
 
 If you experience or witness unacceptable behavior, or have other concerns, please report it by contacting the project maintainers. All reports will be reviewed and investigated.
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by opening a GitHub issue with a detailed description or by contacting the maintainers directly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the maintainers directly. If a report contains sensitive personal or security information, use the private contact paths in [SUPPORT.md](SUPPORT.md) instead of a public issue.
 
 ## Attribution
 

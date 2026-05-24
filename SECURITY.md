@@ -1,84 +1,75 @@
 # Security Policy
 
+Last reviewed: 2026-05-24.
+
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in SkyWatch Live, please email security@skywatch-live.dev or open a private security advisory on GitHub.
+Do not open public GitHub issues for security vulnerabilities.
 
-**Please do not** open public GitHub issues for security vulnerabilities.
+Use one of these channels:
 
-## Security Advisory Guidelines
+1. Open a private GitHub security advisory.
+2. Email `security@skywatch-live.dev`.
+3. If the project security mailbox is unavailable, email `debjitdey450@gmail.com` with `[SECURITY]` in the subject.
 
-When reporting a security issue, please include:
+## Supported Versions
 
-1. **Description** - What is the vulnerability?
-2. **Affected Versions** - Which versions are affected?
-3. **Steps to Reproduce** - How can the vulnerability be reproduced?
-4. **Impact** - What is the security impact?
-5. **Suggested Fix** - If you have a fix, please share it (but do not commit to the repository)
+Security fixes target the current `main` branch and the latest published release tag, when release tags are available.
+
+## Report Contents
+
+Please include:
+
+1. Vulnerability description.
+2. Affected versions or commit range.
+3. Steps to reproduce.
+4. Impact and likely severity.
+5. Suggested fix, if you have one.
+6. Whether the issue is already public.
+
+Do not include live secrets, production credentials, or sensitive third-party data in reports.
 
 ## Response Timeline
 
-- **Initial Response**: We'll acknowledge receipt within 48 hours
-- **Investigation**: We'll investigate and determine the severity
-- **Fix Development**: We'll develop a patch for confirmed vulnerabilities
-- **Public Disclosure**: We'll coordinate a public disclosure timeline with you
+- Initial acknowledgment: within 48 hours when a maintainer is available.
+- Triage: severity and affected surface are assessed after reproduction.
+- Fix: confirmed issues are patched on a reasonable timeline based on severity.
+- Disclosure: public disclosure is coordinated after a fix is available.
 
 ## Responsible Disclosure
 
-We ask that you:
-- Give us reasonable time to patch before public disclosure
-- Don't publicly disclose the vulnerability until we've patched it
-- Don't exploit vulnerabilities beyond what's necessary to demonstrate them
+Please:
 
-## Security Best Practices
+- Give maintainers reasonable time to investigate and patch.
+- Avoid public disclosure before a coordinated fix.
+- Avoid accessing, modifying, deleting, or exfiltrating data beyond what is required to demonstrate impact.
+- Use local or test deployments whenever possible.
+
+## Production Security Checklist
 
 When deploying SkyWatch Live:
 
-1. **Use HTTPS in Production**
-   - Set `DJANGO_SECURE_SSL_REDIRECT=True`
-   - Configure proper TLS certificates
-   - Enable HSTS headers
+1. Use HTTPS/WSS in production.
+2. Set `DJANGO_DEBUG=False`.
+3. Set `SKYWATCH_DEPLOYMENT_PROFILE=production`.
+4. Use a strong `DJANGO_SECRET_KEY` of at least 50 characters.
+5. Use exact `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, and `CORS_ALLOWED_ORIGINS`.
+6. Set a non-default `DJANGO_ADMIN_URL_PATH`.
+7. Use PostgreSQL and Redis with authentication and restricted network access.
+8. Set `METRICS_USER` and `METRICS_PASSWORD`.
+9. Enable secure cookies and HSTS where appropriate.
+10. Keep dependencies updated and review Dependabot/security PRs.
+11. Run `npm run backend:check-deploy` or `python manage.py check --deploy`.
+12. Keep `.env`, `.env.local`, generated secrets, and credentials out of git.
 
-2. **Secure Secrets**
-   - Change all `.env` default values
-   - Use strong, randomly generated `DJANGO_SECRET_KEY`
-   - Store credentials securely (AWS Secrets Manager, HashiCorp Vault, etc.)
+## Known Security Boundaries
 
-3. **Database Security**
-   - Use strong database credentials
-   - Enable authentication for Redis
-   - Restrict database network access
-
-4. **Rate Limiting**
-   - Use a reverse proxy (nginx, Caddy) for rate limiting
-   - Monitor API usage for abuse
-
-5. **Updates**
-   - Keep dependencies updated regularly
-   - Subscribe to security advisories for dependencies
-   - Monitor our GitHub releases for security updates
-
-6. **Monitoring**
-   - Enable Sentry for error tracking
-   - Configure Prometheus/Grafana monitoring
-   - Set up alerts for anomalies
-
-7. **Access Control**
-   - Restrict admin access (`DJANGO_ADMIN_URL_PATH`)
-   - Use strong authentication for admin users
-   - Implement IP whitelisting where possible
-
-## Known Limitations
-
-- Public API endpoints are rate-limited but may be subject to availability
-- Flight data is sourced from public aviation APIs - coverage is not guaranteed
-- This is a surveillance tool; use responsibly and in compliance with local regulations
-- WebSocket connections should be secured with WSS in production
-
-## Questions?
-
-For security-related questions, please contact the maintainers or open a GitHub discussion (not an issue).
+- Public aviation feeds can be unavailable, incomplete, stale, or rate-limited.
+- Flight and satellite information from public sources is not a safety-of-life data source.
+- Production WebSockets should use WSS through a reverse proxy.
+- Image proxy hosts are restricted by `ALLOWED_AIRCRAFT_IMAGE_HOSTS`; keep that allow-list tight.
+- Metrics can reveal operational details and must be protected outside local development.
 
 ## Credits
 
-We appreciate responsible security researchers who help improve SkyWatch Live's security posture.
+We appreciate responsible reports that improve SkyWatch Live's security posture.
