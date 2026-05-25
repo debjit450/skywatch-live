@@ -351,7 +351,10 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
     "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS",
     not DEBUG and SECURE_HSTS_SECONDS > 0,
 )
-SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
+SECURE_HSTS_PRELOAD = env_bool(
+    "DJANGO_SECURE_HSTS_PRELOAD",
+    not DEBUG and SECURE_HSTS_SECONDS > 0,
+)
 
 # ---------------------------------------------------------------------------
 # OpenSky credentials
@@ -431,8 +434,8 @@ if SENTRY_DSN and module_available("sentry_sdk"):
     sentry_sdk.set_tag("app", "skywatch")
     sentry_sdk.set_tag("component", "backend")
 
-OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-if module_available("opentelemetry.sdk"):
+OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+if OTEL_EXPORTER_OTLP_ENDPOINT and module_available("opentelemetry.sdk"):
     try:
         from opentelemetry import trace
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter

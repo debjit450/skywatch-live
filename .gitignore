@@ -42,6 +42,9 @@ coverage/
 test-results/
 playwright-report/
 
+# Ad hoc local screenshots
+Screenshot *.png
+
 # Python / Django local artifacts
 backend/venv/
 backend/.venv/
@@ -66,4 +69,3 @@ __pycache__/
 *.njsproj
 *.sln
 *.sw?
-

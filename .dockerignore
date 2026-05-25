@@ -20,6 +20,7 @@ backend/db.sqlite3
 backend/*.sqlite3
 backend/staticfiles
 backend/ml/models
+frontend/src/lib/data/airports.csv
 src/lib/data/airports.csv
 **/__pycache__
 *.py[cod]

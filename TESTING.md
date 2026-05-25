@@ -1,14 +1,15 @@
 # Testing Guide
 
-Last reviewed: 2026-05-24.
+Last reviewed: 2026-05-25.
 
-SkyWatch Live currently uses TypeScript typechecking, ESLint, production builds, Django system checks, Django tests, Docker image builds in CI, and dependency audits.
+SkyWatch Live currently uses TypeScript typechecking, ESLint, Vitest frontend unit tests, production builds, Django system checks, Django tests, Docker image builds in CI, and dependency audits.
 
 ## Quick Commands
 
 ```bash
 npm test
 npm run check
+npm run test:frontend
 npm run backend:test
 npm run backend:check
 npm run backend:check-deploy
@@ -16,7 +17,8 @@ npm run backend:check-deploy
 
 | Command | Runs |
 | :--- | :--- |
-| `npm run check` | Frontend typecheck, lint, and production build through `frontend/package.json`. |
+| `npm run check` | Frontend typecheck, lint, unit tests, and production build through `frontend/package.json`. |
+| `npm run test:frontend` | Frontend Vitest unit tests. |
 | `npm run backend:test` | Django test suite through `scripts/backend-manage.mjs`. |
 | `npm run backend:check` | Django system checks. |
 | `npm run backend:check-deploy` | Django deployment security checks. |
@@ -27,11 +29,12 @@ npm run backend:check-deploy
 ```bash
 npm --prefix frontend run typecheck
 npm --prefix frontend run lint
+npm --prefix frontend run test
 npm --prefix frontend run build
 npm --prefix frontend run check
 ```
 
-`npm --prefix frontend run check` is the CI-equivalent frontend command. It does not write formatting changes; `npm run format` runs Prettier when you intentionally want to format frontend files.
+`npm --prefix frontend run check` is the CI-equivalent frontend command. It runs typechecking, ESLint, Vitest, and a production build. It does not write formatting changes; `npm run format` runs Prettier when you intentionally want to format frontend files.
 
 ## Backend Checks
 
@@ -68,7 +71,7 @@ coverage report
 coverage html
 ```
 
-Frontend unit-test tooling is not currently configured. Frontend quality gates are TypeScript, ESLint, and successful production builds.
+Frontend unit tests use Vitest and live next to the code they cover as `*.test.ts` or `*.test.tsx` files.
 
 ## CI
 
@@ -98,7 +101,7 @@ class AircraftTests(TestCase):
         self.assertEqual(aircraft.icao24, "abc123")
 ```
 
-Frontend tests can be added after choosing a test runner. Until then, keep browser-facing logic covered by small pure helpers where possible and preserve TypeScript coverage.
+Frontend tests should prefer small pure helpers and behavior that does not require a browser. Use `*.test.ts` for pure utilities and `*.test.tsx` for React tests when component test utilities are added.
 
 ## Debugging
 
@@ -149,6 +152,7 @@ npm run check
 ## Pre-PR Checklist
 
 - [ ] `npm run check` passes.
+- [ ] `npm run test:frontend` passes when frontend behavior changes.
 - [ ] `npm run backend:check` passes.
 - [ ] `npm run backend:check-deploy` is reviewed with production-like env values when deployment behavior changes.
 - [ ] `npm run backend:test` passes.
