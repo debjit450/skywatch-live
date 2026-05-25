@@ -20,9 +20,18 @@ from django.db.models.functions import TruncDay, TruncHour
 from django.utils.dateparse import parse_datetime
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
+
+try:
+    from drf_spectacular.utils import extend_schema
+except ImportError:  # pragma: no cover - drf-spectacular is optional at runtime.
+    def extend_schema(*_args, **_kwargs):
+        def decorator(obj):
+            return obj
+
+        return decorator
 
 from .models import (
     Aircraft,
@@ -61,6 +70,14 @@ ROUTE_GAP_MINUTES = 45
 MAX_REASONABLE_SEGMENT_KM = 950
 ICAO24_RE = re.compile(r"^[0-9a-f]{6}$")
 MAX_LIVE_POSITION_AGE_SECONDS = 180
+
+
+class OpenApiPayloadSerializer(serializers.Serializer):
+    """Generic schema marker for APIViews that build response payloads directly."""
+
+
+class SkyWatchAPIView(APIView):
+    serializer_class = OpenApiPayloadSerializer
 
 
 def _normalize_icao24(value):
@@ -533,13 +550,14 @@ def _serialize_route(session_id, points, source, started_at=None, ended_at=None,
     }
 
 
-class FlightListView(APIView):
+class FlightListView(SkyWatchAPIView):
     """
     GET /api/v1/flights/
     Returns current flight states from cache (or DB fallback).
     Compatible with the frontend's expected format.
     """
 
+    @extend_schema(operation_id="list_flights")
     def get(self, request):
         if getattr(settings, "SKYWATCH_DEMO_MODE", False) or request.query_params.get("demo") == "1":
             payload = build_demo_flight_payload()
@@ -706,12 +724,13 @@ class FlightListView(APIView):
         })
 
 
-class FlightDetailView(APIView):
+class FlightDetailView(SkyWatchAPIView):
     """
     GET /api/v1/flights/<icao24>/
     Returns detailed info for a single aircraft.
     """
 
+    @extend_schema(operation_id="retrieve_flight")
     def get(self, request, icao24):
         icao24 = _normalize_icao24(icao24)
         if not icao24:
@@ -777,7 +796,7 @@ class FlightDetailView(APIView):
         })
 
 
-class FlightRouteView(APIView):
+class FlightRouteView(SkyWatchAPIView):
     """
     GET /api/v1/flights/<icao24>/route/
     Returns the full route polyline for an aircraft.
@@ -890,7 +909,7 @@ class FlightRouteView(APIView):
             )
 
 
-class AnomalyListView(APIView):
+class AnomalyListView(SkyWatchAPIView):
     """
     GET /api/v1/anomalies/
     Returns active anomalies with ML scores.
@@ -958,7 +977,7 @@ class AnomalyListView(APIView):
         })
 
 
-class AnomalyHistoryView(APIView):
+class AnomalyHistoryView(SkyWatchAPIView):
     """
     GET /api/v1/anomalies/history/
     Paginated historical anomalies.
@@ -981,7 +1000,7 @@ class AnomalyHistoryView(APIView):
         )
 
 
-class AnalyticsView(APIView):
+class AnalyticsView(SkyWatchAPIView):
     """
     GET /api/v1/analytics/
     Dashboard metrics and analytics.
@@ -1066,7 +1085,7 @@ class AnalyticsView(APIView):
         })
 
 
-class AnalyticsTimelineView(APIView):
+class AnalyticsTimelineView(SkyWatchAPIView):
     """
     GET /api/v1/analytics/timeline/
     Time-series data for charts.
@@ -1086,7 +1105,7 @@ class AnalyticsTimelineView(APIView):
         return Response({"timeline": list(metrics)})
 
 
-class TrafficAnalyticsView(APIView):
+class TrafficAnalyticsView(SkyWatchAPIView):
     """GET /api/v1/analytics/traffic?range=7d."""
 
     def get(self, request):
@@ -1109,7 +1128,7 @@ class TrafficAnalyticsView(APIView):
         return Response(_cached_payload(f"analytics:traffic:{range_value}", 600, build))
 
 
-class RouteAnalyticsView(APIView):
+class RouteAnalyticsView(SkyWatchAPIView):
     """GET /api/v1/analytics/routes?limit=10."""
 
     def get(self, request):
@@ -1130,7 +1149,7 @@ class RouteAnalyticsView(APIView):
         return Response(_cached_payload(f"analytics:routes:{limit}", 600, build))
 
 
-class AnomalyRateAnalyticsView(APIView):
+class AnomalyRateAnalyticsView(SkyWatchAPIView):
     """GET /api/v1/analytics/anomaly-rate?range=30d."""
 
     def get(self, request):
@@ -1171,7 +1190,7 @@ class AnomalyRateAnalyticsView(APIView):
         return Response(_cached_payload(f"analytics:anomaly-rate:{range_value}", 600, build))
 
 
-class AircraftTypeAnalyticsView(APIView):
+class AircraftTypeAnalyticsView(SkyWatchAPIView):
     """GET /api/v1/analytics/aircraft-types."""
 
     def get(self, request):
@@ -1194,7 +1213,7 @@ class AircraftTypeAnalyticsView(APIView):
         return Response(_cached_payload("analytics:aircraft-types", 600, build))
 
 
-class PredictionView(APIView):
+class PredictionView(SkyWatchAPIView):
     """
     GET /api/v1/predictions/<icao24>/
     Predicted position for the next 5 minutes.
@@ -1276,7 +1295,7 @@ class PredictionView(APIView):
         })
 
 
-class MetarWeatherView(APIView):
+class MetarWeatherView(SkyWatchAPIView):
     """GET /api/v1/weather/metar?airports=KJFK,EGLL."""
 
     permission_classes = [AllowAny]
@@ -1296,7 +1315,7 @@ class MetarWeatherView(APIView):
         return Response({"weather": weather, "count": len(weather)})
 
 
-class TfrAirspaceView(APIView):
+class TfrAirspaceView(SkyWatchAPIView):
     """GET /api/v1/airspace/tfr."""
 
     permission_classes = [AllowAny]
@@ -1307,7 +1326,7 @@ class TfrAirspaceView(APIView):
         return Response(get_airspace_restrictions())
 
 
-class AirspaceRestrictionsView(APIView):
+class AirspaceRestrictionsView(SkyWatchAPIView):
     """GET /api/v1/airspace/restrictions/."""
 
     permission_classes = [AllowAny]
@@ -1318,7 +1337,7 @@ class AirspaceRestrictionsView(APIView):
         return Response(get_airspace_restrictions())
 
 
-class PlaybackView(APIView):
+class PlaybackView(SkyWatchAPIView):
     """GET /api/v1/playback?flight_id=X&start=ISO8601&end=ISO8601."""
 
     permission_classes = [IsAuthenticated]
@@ -1391,7 +1410,7 @@ class PlaybackView(APIView):
         })
 
 
-class AnomalyExplanationView(APIView):
+class AnomalyExplanationView(SkyWatchAPIView):
     def get(self, request, pk):
         try:
             event = AnomalyEvent.objects.select_related("aircraft", "alert_rule").get(pk=pk)
@@ -1400,7 +1419,7 @@ class AnomalyExplanationView(APIView):
         return Response({"id": event.id, "explanation": event.explanation or []})
 
 
-class AnomalyFeedbackView(APIView):
+class AnomalyFeedbackView(SkyWatchAPIView):
     permission_classes = [IsAuthenticated]
     throttle_scope = "alert_mutation"
 
@@ -1417,7 +1436,7 @@ class AnomalyFeedbackView(APIView):
         return Response({"id": event.id, "feedback": event.feedback})
 
 
-class AlertRuleListView(APIView):
+class AlertRuleListView(SkyWatchAPIView):
     permission_classes = [AllowAny]
     throttle_scope = "alert_mutation"
 
@@ -1432,7 +1451,7 @@ class AlertRuleListView(APIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class AlertRuleDetailView(APIView):
+class AlertRuleDetailView(SkyWatchAPIView):
     permission_classes = [AllowAny]
     throttle_scope = "alert_mutation"
 
@@ -1453,7 +1472,7 @@ class AlertRuleDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class DataSourceStatsView(APIView):
+class DataSourceStatsView(SkyWatchAPIView):
     """
     GET /api/v1/sources/
     Returns per-source aircraft counts and metadata.
@@ -1550,7 +1569,7 @@ class DataSourceStatsView(APIView):
         })
 
 
-class SourceHealthView(APIView):
+class SourceHealthView(SkyWatchAPIView):
     """GET /api/v1/source-health/."""
 
     def get(self, request):
@@ -1561,7 +1580,7 @@ class SourceHealthView(APIView):
         })
 
 
-class IngestionAuditView(APIView):
+class IngestionAuditView(SkyWatchAPIView):
     """GET /api/v1/ingestion-audits/?source=opensky."""
 
     def get(self, request):
@@ -1575,7 +1594,7 @@ class IngestionAuditView(APIView):
         return paginator.get_paginated_response(IngestionAuditSerializer(page, many=True).data)
 
 
-class ModelStatusView(APIView):
+class ModelStatusView(SkyWatchAPIView):
     """GET /api/v1/model-status/."""
 
     def get(self, request):
@@ -1601,7 +1620,7 @@ class ModelStatusView(APIView):
         })
 
 
-class SatelliteCatalogView(APIView):
+class SatelliteCatalogView(SkyWatchAPIView):
     """
     GET /api/v1/satellites/
     Returns public CelesTrak satellite positions propagated with SGP4.

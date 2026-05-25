@@ -252,7 +252,8 @@ npm run dev-all
 | `npm run dev-all` | Start frontend and Django API servers concurrently. |
 | `npm run backend:celery` | Start a Celery worker with `-A skywatch`. |
 | `npm run backend:beat` | Start Celery Beat with `-A skywatch`. |
-| `npm run check` | Frontend typecheck, lint, and production build. |
+| `npm run check` | Frontend typecheck, lint, unit tests, and production build. |
+| `npm run test:frontend` | Run frontend Vitest unit tests. |
 | `npm run backend:check` | Django system check. |
 | `npm run backend:check-deploy` | Django deployment security check. |
 | `npm run backend:migrate` | Apply Django migrations. |

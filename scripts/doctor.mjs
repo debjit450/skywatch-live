@@ -65,7 +65,7 @@ add("backend/.env", existsSync(path.join(root, "backend", ".env")), "backend run
 
 const backendEnvPath = path.join(root, "backend", ".env");
 if (existsSync(backendEnvPath)) {
-  const env = readFileSync(backendEnvPath, "utf8");
+  const env = readFileSync(backendEnvPath, "utf8").replace(/^\uFEFF/, "");
   const debug = /^DJANGO_DEBUG=True$/m.test(env);
   const hasSecret = /^DJANGO_SECRET_KEY=.+/m.test(env);
   const hasDatabase = /^DATABASE_URL=.+/m.test(env) || /^DJANGO_DATABASE_URL=.+/m.test(env);

@@ -9,9 +9,12 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
+    "start": "node scripts/serve-built.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src vite.config.ts eslint.config.js",
-    "check": "npm run typecheck && npm run lint && npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "format": "prettier --write ."
   },
   "dependencies": {
@@ -58,6 +61,7 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^7.3.1",
-    "vite-tsconfig-paths": "^6.1.1"
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.7"
   }
 }

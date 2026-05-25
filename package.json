@@ -18,6 +18,7 @@
     "format": "npm run --prefix frontend format",
     "check": "npm run --prefix frontend check",
     "test": "npm run check && npm run backend:test",
+    "test:frontend": "npm run --prefix frontend test",
     "doctor": "node scripts/doctor.mjs",
     "reset-local-db": "node scripts/reset-local-db.mjs",
     "smoke": "node scripts/smoke-test.mjs",
